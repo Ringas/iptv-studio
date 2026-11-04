@@ -17,13 +17,18 @@ class RateLimitTest(unittest.TestCase):
         service.gateway_windows.clear()
 
     def test_short_burst(self):
-        with patch.object(service,'gateway_clock',return_value=100):
-            for i in range(5):
-                self.assertEqual(service.gateway_delay(f'http://gateway/{i}',True),0)
-            self.assertEqual(service.gateway_delay('http://gateway/6'),6)
-            self.assertEqual(service.gateway_delay('http://other/6'),0)
-        with patch.object(service,'gateway_clock',return_value=106):
-            self.assertEqual(service.gateway_delay('http://gateway/6',True),0)
+        with patch.object(service, 'gateway_clock', return_value=100) as clock:
+            self.assertEqual(service.gateway_delay('http://gateway/1', True), 0)
+            self.assertEqual(service.gateway_delay('http://gateway/1'), 2.5)
+            self.assertEqual(service.gateway_delay('http://gateway/2'), 2.5)
+            self.assertEqual(service.gateway_delay('http://other/1'), 0)
+            clock.return_value = 102.5
+            self.assertEqual(service.gateway_delay('http://gateway/2', True), 0)
+            clock.return_value = 105
+            self.assertEqual(service.gateway_delay('http://gateway/3', True), 0)
+            self.assertEqual(service.gateway_delay('http://gateway/4'), 6)
+            clock.return_value = 111
+            self.assertEqual(service.gateway_delay('http://gateway/4', True), 0)
 
     def test_scheduler(self):
         requests=[]

@@ -6,3 +6,9 @@ __pycache__/
 .env
 .env.*
 *.m3u
+.pytest_cache/
+.venv/
+node_modules/
+*.log
+/dist/
+/build/

@@ -17,4 +17,4 @@
 [测试报告、逐条测量、原网复跑方法与待研究问题](research/probe/README.md)
 
 ## 继续开发
-Python 3.10+、Node.js 22+、FFmpeg。先阅读 README.md 和上述研究记录。云端用隔离空库与模拟源；运行 `python verify.py`、`python verify_playback.py`、`python verify_probe_schedule.py` 等脚本。限流测试中的 test_short_burst 仍按同一时刻可打开五个入口断言，与当前 2.5 秒入口间隔冲突，需单独核对。真实线路结论只在原网络复核。
+Python 3.10+、Node.js 22+、FFmpeg。先阅读 README.md 和上述研究记录。云端用隔离空库与模拟源；运行 `python verify.py`、`python verify_playback.py`、`python verify_probe_schedule.py` 等脚本。运行 `python verify_rate_limit.py` 检查同上游入口间隔、短时冷却和调度行为。真实线路结论只在原网络复核。
