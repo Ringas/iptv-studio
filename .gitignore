@@ -1,0 +1,8 @@
+data/
+work/
+__pycache__/
+*.pyc
+*.sqlite*
+.env
+.env.*
+*.m3u

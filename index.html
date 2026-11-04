@@ -1,0 +1,78 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>频谱 · 频道工作室</title><link rel="stylesheet" href="/style.css"></head><body>
+<a class="skip" href="#workspace">跳到工作区</a>
+<aside class="app-rail">
+  <div class="wordmark"><svg viewBox="0 0 40 40" width="40" height="40" aria-hidden="true"><defs><linearGradient id="waveBlue" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop stop-color="#419fff"/><stop offset="1" stop-color="#0064d7"/></linearGradient></defs><rect width="40" height="40" rx="11" fill="url(#waveBlue)"/><path d="M8 23h4l3-11 5 18 4-21 3 14h5" fill="none" stroke="white" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/></svg><div><b>频谱</b><small>频道工作室</small></div></div>
+  <nav aria-label="工作区">
+    <button data-tab="channels" class="active" aria-current="page"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="3" width="16" height="11" rx="2"/><path d="M6 17h8m-4-3v3"/></svg>频道库</button>
+    <button data-tab="sources"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m10 2 8 4-8 4-8-4 8-4ZM2 10l8 4 8-4M2 14l8 4 8-4"/></svg>源管理</button>
+    <button data-tab="settings"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h4m4 0h6M3 10h8m4 0h2M3 15h2m4 0h8"/><circle cx="9" cy="5" r="2"/><circle cx="13" cy="10" r="2"/><circle cx="7" cy="15" r="2"/></svg>设置与订阅</button>
+  </nav>
+  <div class="rail-bottom"><button id="hiddenManager" title="查看并恢复已隐藏的分组、频道和线路。" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 10s3-5 8-5 8 5 8 5-3 5-8 5-8-5-8-5Z"/><path d="m3 3 14 14"/><circle cx="10" cy="10" r="2"/></svg><span>隐藏管理</span><span id="hiddenCount">0</span></button><small id="edition"></small></div>
+</aside>
+<main id="workspace" tabindex="-1">
+<div class="workspace-bar"><span>工作区 <i>/</i> <strong id="pageLabel">频道库</strong></span><div class="task-actions"><div id="task" role="status"><span id="taskMessage">正在读取工作区…</span><span id="taskChannels"></span><span id="taskProgress"></span></div><button type="button" data-stop-current hidden title="跳过当前线路，保留上次测速结果，继续测试下一条。">跳过此线路</button><button type="button" data-stop-all hidden title="停止当前测速和余下队列，保留已经完成的结果。">终止整批</button></div></div>
+<section id="channels" class="studio-shell">
+  <div class="page-heading"><div><h1>频道库</h1><span id="librarySummary"></span></div><a class="subscribe" href="/live.m3u" target="_blank" rel="noopener">M3U 订阅 ↗</a></div>
+  <div class="catalog-tools" id="catalogTools"><div class="control-deck">
+    <div class="find-row"><label class="search-box"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg><input id="query" type="search" placeholder="搜索频道、直播平台或线路地址" aria-label="搜索频道、直播平台或线路地址"></label>
+    <select id="group" aria-label="筛选分组"><option value="">全部分组</option></select>
+    <div class="view-switch" role="group" aria-label="目录视图"><button id="viewCards" aria-pressed="true">频道卡片</button><button id="viewLines" aria-pressed="false">线路列表</button></div></div>
+    <div class="filters"><span id="resultCount"></span><button id="exitDrill" hidden></button><button id="exitHealth" hidden></button><span class="push"></span><button id="probe">测速全部线路</button><button id="bulkMode" title="进入批量模式，点击卡片或线路进行选择。" aria-pressed="false">批量管理</button></div>
+  </div>
+<div class="bulk" role="region" aria-label="批量管理悬浮操作栏"><button type="button" id="selectVisible" class="bulk-select" role="checkbox" aria-checked="false"><span class="selection-indicator" aria-hidden="true"></span>全选</button><span id="pickedCount" aria-live="polite"></span><button id="clearPicks" disabled>清空选择</button><div class="bulk-actions"><button id="probePicked" title="只测试所选线路，同一直播地址只测一次。" disabled>测试所选线路</button><small id="bulkPrompt">点击卡片或线路以选择</small><span id="bulkActions" role="group" aria-label="所选线路操作" hidden><button type="button" data-bulk="on">启用</button><button type="button" data-bulk="off">停用</button><button type="button" data-bulk="hide">隐藏</button></span></div><button type="button" id="bulkDone" title="退出批量管理并清空选择" aria-label="退出批量管理"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 6 8 8M14 6l-8 8"/></svg></button></div>
+</div><div id="catalog"></div></section>
+<section id="sources" hidden><div class="page-heading"><div><h1>源管理</h1><span>连接你的直播与节目单，安排每一次更新。</span></div><div class="actions"><button id="sync" title="立即更新所有已启用的直播订阅和节目单。">更新订阅和 EPG</button><button id="newSource" class="primary">添加订阅</button></div></div><div id="sourceSummary" aria-label="订阅概览"></div><div id="feeds"></div></section>
+<section id="settings" hidden>
+  <div class="page-heading"><div><h1>设置与订阅</h1><span>管理订阅更新、线路发布与播放器订阅。</span></div>
+    <button type="button" id="openLogs" title="按订阅更新或线路测速查看执行结果，失败记录可展开查看原因。" aria-haspopup="dialog" aria-controls="logDialog">任务记录</button>
+  </div>
+  <div class="settings-layout">
+    <form id="schedule">
+      <section class="pref-panel" aria-labelledby="updateTitle">
+        <h2 id="updateTitle">更新计划</h2>
+        <div class="pref-row">
+          <label for="defaultHours">默认更新间隔<small>适用于选择「跟随默认设置」的订阅。填 0 关闭。</small></label>
+          <div class="number-unit"><input id="defaultHours" name="hours" type="number" min="0" max="720" step="any" required><span>小时</span></div>
+        </div>
+        <label class="pref-row" for="autoProbe"><span>更新后测速<small>自动更新成功后，复测该直播订阅的线路。</small></span><input id="autoProbe" class="pref-switch" type="checkbox" role="switch" name="auto_probe"></label>
+        <div class="plan-status"><span id="next"></span></div>
+      </section>
+      <section class="pref-panel" aria-labelledby="publishTitle">
+        <h2 id="publishTitle">线路发布</h2>
+        <div class="pref-row"><label for="publishMode">同频道多条线路</label><select id="publishMode" title="选择发布每个频道的全部可用线路，或只发布排序最靠前的一条。" name="mode"><option value="merge">保留多条线路</option><option value="best">仅发布最优线路</option></select></div>
+        <label class="pref-row" for="strictMode"><span>按测速结果自动启停<small>线路测速完成后恢复自动控制。曾通过的线路遇到临时故障会间隔复测。</small></span><input id="strictMode" class="pref-switch" type="checkbox" role="switch" name="strict"></label>
+        <div class="criteria-box">
+          <div class="pref-row"><label for="probeMode">检测方式<small>智能检测先快速验证；不稳定或首次暂时失败的线路，间隔后再连续复测一次。</small></label><select id="probeMode" name="probe_mode"><option value="adaptive">智能检测</option><option value="continuous">全部连续检测</option><option value="legacy">传统末片测速（8 秒）</option></select></div>
+          <div class="pref-row"><label for="probeCriteria">测速通过条件</label><select id="probeCriteria" title="按速率、画面高度或两者一起判定线路是否通过。" name="criteria"><option value="speed">速率达标</option><option value="resolution">分辨率达标</option><option value="both">速率与分辨率均达标</option></select></div>
+          <div class="pref-row" id="speedRule"><label for="minSpeed">速率高于</label><div class="number-unit"><input id="minSpeed" title="实测速率必须高于这个值，等于门槛时也算未通过。" name="min_speed" type="number" min="0" step="any" required><span>KB/s</span></div></div>
+          <div class="pref-row" id="heightRule"><label for="minHeight">画面高度至少</label><div class="number-unit"><input id="minHeight" title="按画面高度判定，等于门槛时也算达标。" name="min_height" type="number" min="1" max="16384" required><span>像素</span></div></div>
+        </div>
+      </section>
+      <div class="pref-save"><span id="saveStatus" role="status"></span><button class="primary">保存设置</button></div>
+    </form>
+    <aside class="settings-side" aria-label="发布概览、播放器订阅与访问设置">
+      <section class="pref-panel"><h2>发布概览</h2><div id="stats"></div></section>
+      <section class="pref-panel"><h2>播放器订阅</h2><div class="export-list">
+        <a href="/live.m3u" target="_blank" rel="noopener"><b>M3U 清单</b><small>频道与直播地址</small><i aria-hidden="true">↗</i></a>
+        <a href="/live.txt" target="_blank" rel="noopener"><b>TXT 多线路</b><small>按频道合并线路</small><i aria-hidden="true">↗</i></a>
+        <a href="/live.json" target="_blank" rel="noopener"><b>频道 JSON</b><small>结构化频道数据</small><i aria-hidden="true">↗</i></a>
+        <a href="/guide.xml" target="_blank" rel="noopener"><b>XMLTV 节目单</b><small>节目与播出时间</small><i aria-hidden="true">↗</i></a>
+      </div></section>
+      <form id="accessForm" class="pref-panel" aria-labelledby="accessTitle">
+        <h2 id="accessTitle">管理台访问</h2>
+        <label for="accessPassword">访问密码</label>
+        <input id="accessPassword" type="password" autocomplete="new-password" placeholder="留空表示无密码" aria-describedby="accessHint">
+        <small id="accessHint"></small>
+        <button id="savePassword" type="submit" disabled>保存访问密码</button>
+      </form>
+    </aside>
+  </div>
+</section></main>
+<dialog id="playerDialog" aria-labelledby="playerTitle">
+  <div class="bar"><div><h2 id="playerTitle">线路播放</h2><small id="playerSource"></small></div><button type="button" id="closePlayer">关闭</button></div>
+  <video id="previewVideo" controls playsinline preload="none"></video>
+  <div class="player-feedback"><span id="playerStatus" role="status"></span><button type="button" id="retryPlayer" hidden>重新播放</button></div>
+</dialog>
+<dialog id="logDialog" aria-labelledby="logTitle"><div class="bar"><h2 id="logTitle">任务记录</h2><form method="dialog"><button autofocus>关闭</button></form></div><div class="log-tools"><label class="log-filter">记录类型 <select id="logKind"><option value="refresh">订阅更新</option><option value="probe">线路测速</option><option value="history">历史记录</option></select></label><button type="button" id="clearLogs" disabled title="仅清除当前类型的任务记录，保留订阅设置和线路测速结果。">清除当前记录</button></div><div id="logs" tabindex="0">正在加载任务记录…</div></dialog>
+<dialog id="hiddenDialog" aria-labelledby="hiddenTitle"><div class="bar"><h2 id="hiddenTitle">隐藏管理</h2><button id="closeHidden" type="button">关闭</button></div><p>恢复频道、分组或指定线路。恢复后沿用原有启停与测速设置。</p><div id="hiddenFeedback" role="status"></div><div id="hiddenList"></div></dialog>
+<aside id="infoPopup" popover="manual" role="dialog" aria-labelledby="popupTitle"><div class="bar"><h2 id="popupTitle"></h2><button id="closePopup" type="button">关闭</button></div><div id="popupBody"></div></aside><dialog id="dialog" aria-labelledby="title"><form id="editor"><div class="bar"><div class="editor-heading"><span id="titleLogo" class="logo-frame" hidden></span><h2 id="title"></h2></div><div class="actions"><button type="button" id="channelEdit" aria-controls="channelSettings" aria-expanded="false" hidden>编辑</button><button type="button" id="close">关闭</button></div></div><div id="fields"></div><button id="apply" class="primary">保存</button></form></dialog><div id="notice" role="alert"></div><script src="/ui.js"></script></body></html>

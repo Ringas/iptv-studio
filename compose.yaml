@@ -1,0 +1,9 @@
+name: iptv-studio
+services:
+  iptv-studio:
+    image: talktoo/iptv-studio:latest
+    restart: unless-stopped
+    ports:
+      - "8788:8787"
+    volumes:
+      - ./data:/app/data
