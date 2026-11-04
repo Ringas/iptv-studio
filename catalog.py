@@ -133,6 +133,9 @@ def speed_display(kbps):
     return f'{kbps:.2f} KB/s'
 
 def assess(test, settings):
+    if test.get('pipeline'):
+        if test.get('stable_qualified') and test.get('quality') in ('暂时失败','未能验证'):return '待复测'
+        settings={**settings,'criteria':'both','min_speed':100,'min_height':720}
     if test.get('method') in ('quick','continuous'):
         if test.get('quality') in ('暂时失败','未能验证'):
             return '待复测' if test.get('grace') else test['quality']

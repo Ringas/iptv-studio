@@ -451,6 +451,9 @@ def run(action,requested):
                         if name not in info['sources']: info['sources'].append(name)
             targets=list(requested) if requested is not None else list(routes)
             retries={}
+            fine=set()
+            pipeline=cfg['probe_mode']=='pipeline'
+            if pipeline:cfg.update(criteria='both',min_speed=100,min_height=720)
             recheck_reasons={}
             passed=failed=uncertain=stopped=skipped=0
             outcomes={}
@@ -471,6 +474,7 @@ def run(action,requested):
                     if job['stop_queue']: break
                     job.update(message=f'测速 {i+1}/{len(targets)} · {channel}',done=i,active_url=u,active_channel=channel,sample=None,sample_seconds=0,stop_line=False,rechecking=u in retries)
                 method=cfg['probe_mode']
+                if pipeline:method='continuous' if u in fine or u in retries else 'quick'
                 if method=='adaptive':
                     method='continuous' if info.get('deep') or u in retries else 'quick'
                 try:
@@ -483,6 +487,10 @@ def run(action,requested):
                     if job['stop_line']:result={}
                     elif delay:result={'httpStatus':429,'deferred':True,'note':[f'入口仍在限流冷却，约 {math.ceil(delay)} 秒后可复测']}
                     else:result=probe(u,method,info.get('options',[]))
+                    if pipeline and u not in fine and u not in retries and result.get('advanced'):
+                        fine.add(u)
+                        targets.append(targets.pop(i))
+                        continue
                 except Exception as exc: result={'status':'测速失败','quality':'暂时失败','retryable':True,'note':[str(exc)]}
                 with LOCK, db() as c:
                     fields=dict(channel=channel,source=' / '.join(info['sources']),url=u)
@@ -509,6 +517,10 @@ def run(action,requested):
                         result.setdefault('at',time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()))
                         prior=c.execute('select result from tests where url=?',(u,)).fetchone()
                         previous=json.loads(prior[0]) if prior else {}
+                        if pipeline:
+                            result['pipeline']=True
+                            if result.get('quality')=='未能验证' and u not in retries:
+                                result['retryable']=True
                         direct_history=previous.get('direct_history',[])
                         if method!='legacy':
                             result.setdefault('method',method)
@@ -536,6 +548,15 @@ def run(action,requested):
                             if u in retries and u not in limited_once:history=history[:-1]
                             result['recent']=(history+[int(result['quality'] in ('流畅','初检可播'))])[-5:]
                         if direct_history:result['direct_history']=direct_history
+                        if pipeline:
+                            history=previous.get('qualification_history',[])
+                            if previous.get('qualification_pending'):history=history[:-1]
+                            qualifies=assess(result,cfg)=='保留' and result.get('advanced',False)
+                            result['qualification_history']=(history+[int(qualifies)])[-3:]
+                            result['qualification_pending']=u in targets[i+1:]
+                            # Retain a previously qualified route through one independent failure.
+                            result['stable_qualified']=qualifies or (previous.get('stable_qualified',False) and sum(result['qualification_history'][-2:])>=1)
+                            result['grace']=result['stable_qualified'] or result['qualification_pending']
                         assessment=assess(result,cfg)
                         reason=[assessment,*result.get('note',[])]
                         if assessment=='速率未达标': reason.append(f"要求严格高于 {cfg['min_speed']} KB/s")
@@ -670,13 +691,14 @@ def edit(kind,p):
             hours=hours_value(p['hours'] if 'hours' in p else float(p.get('minutes',cfg['minutes']))/60)
             if p['mode'] not in ('merge','best'): raise ValueError('设置无效')
             method=p.get('probe_mode',cfg['probe_mode'])
-            if method not in ('adaptive','continuous','legacy'):raise ValueError('无效检测方式')
+            if method not in ('adaptive','continuous','legacy','pipeline'):raise ValueError('无效检测方式')
             criteria=p.get('criteria',cfg['criteria'])
             speed=float(p.get('min_speed',cfg['min_speed']))
             height=int(p.get('min_height',cfg['min_height']))
             if criteria not in ('speed','resolution','both') or not math.isfinite(speed) or speed<0 or not 1<=height<=16384:
                 raise ValueError('测速条件无效')
             cfg.update(criteria=criteria,min_speed=speed,min_height=height)
+            if method=='pipeline':cfg.update(criteria='both',min_speed=100,min_height=720)
             if hours!=cfg['minutes']/60:
                 c.execute('update sources set next_update=? where enabled and interval_hours is null',(deadline(hours),))
             cfg.update(probe_mode=method,minutes=hours*60,mode=p['mode'],auto_probe=bool(p['auto_probe']),strict=bool(p['strict']))
