@@ -27,7 +27,7 @@ jobs:
       IMAGE: talktoo/iptv-studio
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.release.tag_name || inputs.tag || github.sha }}
           persist-credentials: false
@@ -35,7 +35,7 @@ jobs:
         env:
           EVENT_TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
-          tag="${EVENT_TAG:-$(cat .github/release-version)}"
+          tag="${EVENT_TAG:-$(head -n 1 .github/release-version)}"
           [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           echo "TAG=$tag" >> "$GITHUB_ENV"
           echo "OUT=$RUNNER_TEMP/iptv-release" >> "$GITHUB_ENV"
@@ -45,8 +45,8 @@ jobs:
         run: |
           docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" -t "$IMAGE:$TAG" "$OUT/context"
           docker run -d --name iptv-check -p 127.0.0.1:18787:8787 "$IMAGE:$TAG"
-          trap 'docker rm -fv iptv-check >/dev/null' EXIT
-          curl -fsS --retry 12 --retry-connrefused --retry-delay 2 http://127.0.0.1:18787/health
+          trap 'rc=$?; if [ "$rc" -ne 0 ]; then docker logs iptv-check; fi; docker rm -fv iptv-check >/dev/null' EXIT
+          curl -fsS --retry 12 --retry-all-errors --retry-delay 2 http://127.0.0.1:18787/health
           curl -fsS http://127.0.0.1:18787/api/state | python3 -c 'import json,sys; assert json.load(sys.stdin)["sources"] == []'
           curl -fsS http://127.0.0.1:18787/live.m3u | grep -q '^#EXTM3U'
           docker exec iptv-check ffmpeg -version >/dev/null
