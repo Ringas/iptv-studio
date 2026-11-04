@@ -6,8 +6,7 @@
 
 自托管 · 多线路 · 深度检测 · NAS 友好
 
-[界面预览](#界面预览) · [核心功能](#核心功能) · [快速部署](#快速部署) · [开始使用](#开始使用) · [播放器地址](#播放器地址) · [本地开发](#本地开发)
-
+[界面预览](#界面预览) · [核心功能](#核心功能) · [快速部署](#快速部署) 
 [下载发行版](https://github.com/Ringas/iptv-studio/releases/latest) · [Docker Hub](https://hub.docker.com/r/talktoo/iptv-studio)
 
 </div>
