@@ -1,0 +1,889 @@
+{
+  "baseline-pipeline": [
+    {
+      "channel": "央视频 CCTV7",
+      "elapsed": 0.48,
+      "assessment": "未能验证",
+      "result": {
+        "at": "2026-11-03T18:20:53.653Z",
+        "bytes": 0,
+        "requests": 0,
+        "full": 0,
+        "quality": "未能验证",
+        "status": "未能验证",
+        "httpStatus": 403,
+        "retryable": false,
+        "seconds": 0.41,
+        "entry_retries": 0
+      }
+    },
+    {
+      "channel": "央视频 CCTV8",
+      "elapsed": 8.97,
+      "assessment": "未能验证",
+      "result": {
+        "at": "2026-11-03T18:21:10.700Z",
+        "bytes": 0,
+        "requests": 0,
+        "full": 0,
+        "quality": "未能验证",
+        "status": "未能验证",
+        "httpStatus": 403,
+        "retryable": false,
+        "seconds": 0.33,
+        "entry_retries": 0
+      },
+      "first_attempt": {
+        "at": "2026-11-03T18:21:02.163Z",
+        "bytes": 0,
+        "requests": 0,
+        "full": 0,
+        "quality": "未能验证",
+        "status": "未能验证",
+        "httpStatus": 403,
+        "retryable": false,
+        "seconds": 0.43,
+        "entry_retries": 0
+      }
+    },
+    {
+      "channel": "央视频 CCTV8K",
+      "elapsed": 6.97,
+      "assessment": "未能验证",
+      "result": {
+        "at": "2026-11-03T18:21:19.133Z",
+        "bytes": 0,
+        "requests": 0,
+        "full": 0,
+        "quality": "未能验证",
+        "status": "未能验证",
+        "httpStatus": 403,
+        "retryable": false,
+        "seconds": 6.86,
+        "entry_retries": 0
+      }
+    },
+    {
+      "channel": "咪咕 CCTV7",
+      "elapsed": 10.91,
+      "assessment": "保留",
+      "result": {
+        "at": "2026-11-03T18:21:34.110Z",
+        "bytes": 13288968,
+        "requests": 0,
+        "full": 0,
+        "quality": "初检可播",
+        "status": "保留",
+        "seconds": 10.2,
+        "entry_retries": 0,
+        "segments": 3,
+        "speed": 16840.3,
+        "resolution": {
+          "width": 1920,
+          "height": 1080,
+          "source": "FFmpeg 实际解码帧"
+        },
+        "play_seconds": 9.9,
+        "stalls": 0,
+        "stall_seconds": 0,
+        "advanced": true,
+        "retries": 0,
+        "gaps": 0,
+        "startup": 0.95
+      }
+    },
+    {
+      "channel": "咪咕 CCTV8",
+      "elapsed": 5.84,
+      "assessment": "保留",
+      "result": {
+        "at": "2026-11-03T18:21:53.020Z",
+        "bytes": 12174880,
+        "requests": 0,
+        "full": 0,
+        "quality": "初检可播",
+        "status": "保留",
+        "seconds": 5.52,
+        "entry_retries": 0,
+        "segments": 3,
+        "speed": 5413.42,
+        "resolution": {
+          "width": 1920,
+          "height": 1080,
+          "source": "FFmpeg 实际解码帧"
+        },
+        "play_seconds": 4.7,
+        "stalls": 0,
+        "stall_seconds": 0,
+        "advanced": true,
+        "retries": 0,
+        "gaps": 0,
+        "startup": 1.09
+      }
+    }
+  ],
+  "baseline": [
+    {
+      "channel": "央视频 CCTV7",
+      "elapsed": 0.69,
+      "result": {
+        "at": "2026-11-03T17:01:30.737Z",
+        "bytes": 0,
+        "requests": 0,
+        "full": 0,
+        "quality": "未能验证",
+        "status": "未能验证",
+        "httpStatus": 403,
+        "retryable": false,
+        "seconds": 0.51,
+        "entry_retries": 0
+      }
+    },
+    {
+      "channel": "央视频 CCTV8",
+      "elapsed": 7.44,
+      "result": {
+        "at": "2026-11-03T17:01:39.368Z",
+        "bytes": 8357540,
+        "requests": 0,
+        "full": 0,
+        "quality": "初检可播",
+        "status": "保留",
+        "seconds": 7.2,
+        "entry_retries": 0,
+        "segments": 3,
+        "speed": 23287.06,
+        "resolution": {
+          "width": 1920,
+          "height": 1080,
+          "source": "FFmpeg 实际解码帧"
+        },
+        "play_seconds": 6.36,
+        "stalls": 0,
+        "stall_seconds": 0,
+        "advanced": true,
+        "retries": 0,
+        "gaps": 0,
+        "startup": 1.03
+      }
+    },
+    {
+      "channel": "央视频 CCTV8K",
+      "elapsed": 6.92,
+      "result": {
+        "at": "2026-11-03T17:01:54.813Z",
+        "bytes": 0,
+        "requests": 0,
+        "full": 0,
+        "quality": "未能验证",
+        "status": "未能验证",
+        "httpStatus": 403,
+        "retryable": false,
+        "seconds": 6.84,
+        "entry_retries": 0
+      }
+    },
+    {
+      "channel": "咪咕 CCTV7",
+      "elapsed": 6.39,
+      "result": {
+        "at": "2026-11-03T17:02:09.754Z",
+        "bytes": 15873968,
+        "requests": 0,
+        "full": 0,
+        "quality": "初检可播",
+        "status": "保留",
+        "seconds": 5.35,
+        "entry_retries": 0,
+        "segments": 3,
+        "speed": 8063.42,
+        "resolution": {
+          "width": 1920,
+          "height": 1080,
+          "source": "FFmpeg 实际解码帧"
+        },
+        "play_seconds": 4.87,
+        "stalls": 0,
+        "stall_seconds": 0,
+        "advanced": true,
+        "retries": 0,
+        "gaps": 0,
+        "startup": 1.46
+      }
+    },
+    {
+      "channel": "咪咕 CCTV8",
+      "elapsed": 4.59,
+      "result": {
+        "at": "2026-11-03T17:02:24.152Z",
+        "bytes": 11738344,
+        "requests": 0,
+        "full": 0,
+        "quality": "初检可播",
+        "status": "保留",
+        "seconds": 3.94,
+        "entry_retries": 0,
+        "segments": 3,
+        "speed": 19555.93,
+        "resolution": {
+          "width": 1920,
+          "height": 1080,
+          "source": "FFmpeg 实际解码帧"
+        },
+        "play_seconds": 3.6,
+        "stalls": 0,
+        "stall_seconds": 0,
+        "advanced": true,
+        "retries": 0,
+        "gaps": 0,
+        "startup": 0.94
+      }
+    }
+  ],
+  "cadence-pipeline": [
+    {
+      "channel": "央视频 CCTV7",
+      "elapsed": 6.73,
+      "assessment": "保留",
+      "result": {
+        "at": "2026-11-04T00:36:30.800Z",
+        "bytes": 8875104,
+        "requests": 0,
+        "full": 0,
+        "quality": "初检可播",
+        "status": "保留",
+        "seconds": 6.41,
+        "entry_retries": 0,
+        "segments": 3,
+        "speed": 13436.33,
+        "resolution": {
+          "width": 1920,
+          "height": 1080,
+          "source": "FFmpeg 实际解码帧"
+        },
+        "play_seconds": 6.06,
+        "stalls": 0,
+        "stall_seconds": 0,
+        "advanced": true,
+        "retries": 0,
+        "gaps": 0,
+        "startup": 0.61
+      }
+    },
+    {
+      "channel": "央视频 CCTV8",
+      "elapsed": 8.83,
+      "assessment": "保留",
+      "result": {
+        "at": "2026-11-04T00:36:45.552Z",
+        "bytes": 7277104,
+        "requests": 0,
+        "full": 0,
+        "quality": "初检可播",
+        "status": "保留",
+        "seconds": 8.34,
+        "entry_retries": 0,
+        "segments": 3,
+        "speed": 12184.48,
+        "resolution": {
+          "width": 1920,
+          "height": 1080,
+          "source": "FFmpeg 实际解码帧"
+        },
+        "play_seconds": 8.04,
+        "stalls": 0,
+        "stall_seconds": 0,
+        "advanced": true,
+        "retries": 0,
+        "gaps": 0,
+        "startup": 0.7
+      }
+    },
+    {
+      "channel": "央视频 CCTV8K",
+      "elapsed": 6.64,
+      "assessment": "未能验证",
+      "result": {
+        "at": "2026-11-04T00:37:02.373Z",
+        "bytes": 0,
+        "requests": 0,
+        "full": 0,
+        "quality": "未能验证",
+        "status": "未能验证",
+        "retryable": false,
+        "seconds": 6.57,
+        "entry_retries": 0
+      }
+    },
+    {
+      "channel": "咪咕 CCTV7",
+      "elapsed": 11.7,
+      "assessment": "保留",
+      "result": {
+        "at": "2026-11-04T00:37:17.024Z",
+        "bytes": 14418284,
+        "requests": 0,
+        "full": 0,
+        "quality": "初检可播",
+        "status": "保留",
+        "seconds": 11.03,
+        "entry_retries": 0,
+        "segments": 3,
+        "speed": 8748.1,
+        "resolution": {
+          "width": 1920,
+          "height": 1080,
+          "source": "FFmpeg 实际解码帧"
+        },
+        "play_seconds": 10.44,
+        "stalls": 0,
+        "stall_seconds": 0,
+        "advanced": true,
+        "retries": 0,
+        "gaps": 0,
+        "startup": 1.19
+      }
+    },
+    {
+      "channel": "咪咕 CCTV8",
+      "elapsed": 8.22,
+      "assessment": "暂时失败",
+      "result": {
+        "at": "2026-11-04T00:37:44.835Z",
+        "bytes": 0,
+        "requests": 0,
+        "full": 0,
+        "quality": "暂时失败",
+        "status": "暂时失败",
+        "retryable": true,
+        "seconds": 0.03,
+        "entry_retries": 0
+      },
+      "first_attempt": {
+        "at": "2026-11-04T00:37:36.722Z",
+        "bytes": 0,
+        "requests": 0,
+        "full": 0,
+        "quality": "暂时失败",
+        "status": "暂时失败",
+        "retryable": true,
+        "seconds": 0.03,
+        "entry_retries": 0
+      }
+    }
+  ],
+  "independent-highest": [
+    {
+      "channel": "央视频 CCTV7",
+      "elapsed": 1.45,
+      "result": {
+        "bytes": 4461428,
+        "decoded_frames": 60,
+        "pts_advance": 2.36,
+        "exit": 0
+      }
+    },
+    {
+      "channel": "央视频 CCTV8",
+      "elapsed": 0.28,
+      "result": {}
+    },
+    {
+      "channel": "央视频 CCTV8K",
+      "elapsed": 6.78,
+      "result": {}
+    },
+    {
+      "channel": "咪咕 CCTV7",
+      "elapsed": 1.83,
+      "result": {
+        "bytes": 9036972,
+        "decoded_frames": 60,
+        "pts_advance": 2.36,
+        "exit": 0
+      }
+    },
+    {
+      "channel": "咪咕 CCTV8",
+      "elapsed": 2.27,
+      "result": {
+        "bytes": 8516588,
+        "decoded_frames": 60,
+        "pts_advance": 2.36,
+        "exit": 0
+      }
+    }
+  ],
+  "independent": [
+    {
+      "channel": "央视频 CCTV7",
+      "elapsed": 1.22,
+      "result": {
+        "bytes": 3179268,
+        "decoded_frames": 60,
+        "pts_advance": 2.36,
+        "exit": 0
+      }
+    },
+    {
+      "channel": "央视频 CCTV8",
+      "elapsed": 0.84,
+      "result": {
+        "bytes": 3749284,
+        "decoded_frames": 60,
+        "pts_advance": 2.36,
+        "exit": 0
+      }
+    },
+    {
+      "channel": "央视频 CCTV8K",
+      "elapsed": 7.52,
+      "result": {
+        "bytes": 2143388,
+        "decoded_frames": 60,
+        "pts_advance": 2.36,
+        "exit": 0
+      }
+    },
+    {
+      "channel": "咪咕 CCTV7",
+      "elapsed": 2.5,
+      "result": {
+        "bytes": 10670692,
+        "decoded_frames": 60,
+        "pts_advance": 2.36,
+        "exit": 0
+      }
+    },
+    {
+      "channel": "咪咕 CCTV8",
+      "elapsed": 1.48,
+      "result": {
+        "bytes": 7964244,
+        "decoded_frames": 60,
+        "pts_advance": 2.36,
+        "exit": 0
+      }
+    }
+  ],
+  "revised-pipeline": [
+    {
+      "channel": "央视频 CCTV7",
+      "elapsed": 6.03,
+      "assessment": "保留",
+      "result": {
+        "at": "2026-11-03T18:22:07.083Z",
+        "bytes": 7393852,
+        "requests": 0,
+        "full": 0,
+        "quality": "初检可播",
+        "status": "保留",
+        "seconds": 5.77,
+        "entry_retries": 0,
+        "segments": 3,
+        "speed": 14442.47,
+        "resolution": {
+          "width": 1920,
+          "height": 1080,
+          "source": "FFmpeg 实际解码帧"
+        },
+        "play_seconds": 5.51,
+        "stalls": 0,
+        "stall_seconds": 0,
+        "advanced": true,
+        "retries": 0,
+        "gaps": 0,
+        "startup": 0.47
+      }
+    },
+    {
+      "channel": "央视频 CCTV8",
+      "elapsed": 8.69,
+      "assessment": "未能验证",
+      "result": {
+        "at": "2026-11-03T18:22:29.554Z",
+        "bytes": 0,
+        "requests": 0,
+        "full": 0,
+        "quality": "未能验证",
+        "status": "未能验证",
+        "httpStatus": 403,
+        "retryable": true,
+        "seconds": 0.17,
+        "entry_retries": 0,
+        "stage": "media"
+      },
+      "first_attempt": {
+        "at": "2026-11-03T18:22:21.135Z",
+        "bytes": 0,
+        "requests": 0,
+        "full": 0,
+        "quality": "未能验证",
+        "status": "未能验证",
+        "httpStatus": 403,
+        "retryable": true,
+        "seconds": 0.31,
+        "entry_retries": 0,
+        "stage": "media"
+      }
+    },
+    {
+      "channel": "央视频 CCTV8K",
+      "elapsed": 37.75,
+      "assessment": "未能验证",
+      "result": {
+        "at": "2026-11-03T18:22:57.910Z",
+        "bytes": 0,
+        "requests": 0,
+        "full": 0,
+        "quality": "未能验证",
+        "status": "未能验证",
+        "httpStatus": 403,
+        "retryable": true,
+        "seconds": 17.6,
+        "entry_retries": 0,
+        "stage": "media",
+        "startup": 0.61
+      },
+      "first_attempt": {
+        "at": "2026-11-03T18:22:37.825Z",
+        "bytes": 0,
+        "requests": 0,
+        "full": 0,
+        "quality": "暂时失败",
+        "status": "暂时失败",
+        "retryable": true,
+        "seconds": 12.02,
+        "entry_retries": 0
+      }
+    },
+    {
+      "channel": "咪咕 CCTV7",
+      "elapsed": 10.95,
+      "assessment": "保留",
+      "result": {
+        "at": "2026-11-03T18:23:23.580Z",
+        "bytes": 13100592,
+        "requests": 0,
+        "full": 0,
+        "quality": "初检可播",
+        "status": "保留",
+        "seconds": 10.35,
+        "entry_retries": 0,
+        "segments": 3,
+        "speed": 16563.26,
+        "resolution": {
+          "width": 1920,
+          "height": 1080,
+          "source": "FFmpeg 实际解码帧"
+        },
+        "play_seconds": 10.08,
+        "stalls": 0,
+        "stall_seconds": 0,
+        "advanced": true,
+        "retries": 0,
+        "gaps": 0,
+        "startup": 0.82
+      }
+    },
+    {
+      "channel": "咪咕 CCTV8",
+      "elapsed": 5.78,
+      "assessment": "保留",
+      "result": {
+        "at": "2026-11-03T18:23:42.545Z",
+        "bytes": 11667092,
+        "requests": 0,
+        "full": 0,
+        "quality": "初检可播",
+        "status": "保留",
+        "seconds": 5.44,
+        "entry_retries": 0,
+        "segments": 3,
+        "speed": 5401.06,
+        "resolution": {
+          "width": 1920,
+          "height": 1080,
+          "source": "FFmpeg 实际解码帧"
+        },
+        "play_seconds": 4.69,
+        "stalls": 0,
+        "stall_seconds": 0,
+        "advanced": true,
+        "retries": 0,
+        "gaps": 0,
+        "startup": 1.03
+      }
+    }
+  ],
+  "revised": [
+    {
+      "channel": "央视频 CCTV7",
+      "elapsed": 0.44,
+      "result": {
+        "at": "2026-11-03T17:46:11.099Z",
+        "bytes": 0,
+        "requests": 0,
+        "full": 0,
+        "quality": "未能验证",
+        "status": "未能验证",
+        "httpStatus": 403,
+        "retryable": true,
+        "seconds": 0.35,
+        "entry_retries": 0,
+        "stage": "media"
+      }
+    },
+    {
+      "channel": "央视频 CCTV8",
+      "elapsed": 5.89,
+      "result": {
+        "at": "2026-11-03T17:46:19.551Z",
+        "bytes": 6396512,
+        "requests": 0,
+        "full": 0,
+        "quality": "初检可播",
+        "status": "保留",
+        "seconds": 5.6,
+        "entry_retries": 0,
+        "segments": 3,
+        "speed": 16603.9,
+        "resolution": {
+          "width": 1920,
+          "height": 1080,
+          "source": "FFmpeg 实际解码帧"
+        },
+        "play_seconds": 5.36,
+        "stalls": 0,
+        "stall_seconds": 0,
+        "advanced": true,
+        "retries": 0,
+        "gaps": 0,
+        "startup": 0.48
+      }
+    },
+    {
+      "channel": "央视频 CCTV8K",
+      "elapsed": 17.36,
+      "result": {
+        "at": "2026-11-03T17:46:33.450Z",
+        "bytes": 0,
+        "requests": 0,
+        "full": 0,
+        "quality": "未能验证",
+        "status": "未能验证",
+        "retryable": false,
+        "seconds": 17.31,
+        "entry_retries": 0,
+        "startup": 11.55
+      }
+    },
+    {
+      "channel": "咪咕 CCTV7",
+      "elapsed": 7.81,
+      "result": {
+        "at": "2026-11-03T17:46:58.821Z",
+        "bytes": 14741644,
+        "requests": 0,
+        "full": 0,
+        "quality": "初检可播",
+        "status": "保留",
+        "seconds": 7.3,
+        "entry_retries": 0,
+        "segments": 3,
+        "speed": 16440.03,
+        "resolution": {
+          "width": 1920,
+          "height": 1080,
+          "source": "FFmpeg 实际解码帧"
+        },
+        "play_seconds": 6.89,
+        "stalls": 0,
+        "stall_seconds": 0,
+        "advanced": true,
+        "retries": 0,
+        "gaps": 0,
+        "startup": 0.85
+      }
+    },
+    {
+      "channel": "咪咕 CCTV8",
+      "elapsed": 4.26,
+      "result": {
+        "at": "2026-11-03T17:47:14.628Z",
+        "bytes": 11503156,
+        "requests": 0,
+        "full": 0,
+        "quality": "初检可播",
+        "status": "保留",
+        "seconds": 3.72,
+        "entry_retries": 0,
+        "segments": 3,
+        "speed": 27414.34,
+        "resolution": {
+          "width": 1920,
+          "height": 1080,
+          "source": "FFmpeg 实际解码帧"
+        },
+        "play_seconds": 3.54,
+        "stalls": 0,
+        "stall_seconds": 0,
+        "advanced": true,
+        "retries": 0,
+        "gaps": 0,
+        "startup": 0.67
+      }
+    }
+  ],
+  "transport": [
+    {
+      "trial": 0,
+      "channel": "CCTV7国防军事",
+      "pairs": [
+        {
+          "python": {
+            "status": 403
+          },
+          "node": {
+            "status": 403,
+            "bytes": 238
+          }
+        },
+        {
+          "python": {
+            "status": 403
+          },
+          "node": {
+            "status": 403,
+            "bytes": 238
+          }
+        }
+      ]
+    },
+    {
+      "trial": 0,
+      "channel": "CCTV8电视剧",
+      "pairs": [
+        {
+          "python": {
+            "status": 403
+          },
+          "node": {
+            "status": 403,
+            "bytes": 238
+          }
+        },
+        {
+          "python": {
+            "status": 403
+          },
+          "node": {
+            "status": 403,
+            "bytes": 238
+          }
+        }
+      ]
+    },
+    {
+      "trial": 1,
+      "channel": "CCTV7国防军事",
+      "pairs": [
+        {
+          "node": {
+            "status": 403,
+            "bytes": 238
+          },
+          "python": {
+            "status": 403
+          }
+        },
+        {
+          "node": {
+            "status": 403,
+            "bytes": 238
+          },
+          "python": {
+            "status": 403
+          }
+        }
+      ]
+    },
+    {
+      "trial": 1,
+      "channel": "CCTV8电视剧",
+      "pairs": [
+        {
+          "node": {
+            "status": 200,
+            "bytes": 15673
+          },
+          "python": {
+            "status": 200,
+            "bytes": 4096
+          }
+        },
+        {
+          "node": {
+            "status": 200,
+            "bytes": 15673
+          },
+          "python": {
+            "status": 200,
+            "bytes": 4096
+          }
+        }
+      ]
+    },
+    {
+      "trial": 2,
+      "channel": "CCTV7国防军事",
+      "pairs": [
+        {
+          "python": {
+            "status": 200,
+            "bytes": 4096
+          },
+          "node": {
+            "status": 403,
+            "bytes": 2794
+          }
+        },
+        {
+          "python": {
+            "status": 403
+          },
+          "node": {
+            "status": 403,
+            "bytes": 2795
+          }
+        }
+      ]
+    },
+    {
+      "trial": 2,
+      "channel": "CCTV8电视剧",
+      "pairs": [
+        {
+          "python": {
+            "status": 200,
+            "bytes": 4096
+          },
+          "node": {
+            "status": 200,
+            "bytes": 15670
+          }
+        },
+        {
+          "python": {
+            "status": 200,
+            "bytes": 4096
+          },
+          "node": {
+            "status": 200,
+            "bytes": 15673
+          }
+        }
+      ]
+    }
+  ]
+}

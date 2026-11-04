@@ -132,6 +132,11 @@ def main():
                 return
             elif path=='/master':
                 body=b'#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=2000000\nhigh\n#EXT-X-STREAM-INF:BANDWIDTH=500000\nlive\n'
+            elif path=='/cadence':
+                entry_times.setdefault(path,[]).append(time.monotonic())
+                seq=int((time.monotonic()-started)//6)
+                rows=''.join(f'#EXTINF:1,\n/live/{i}.ts\n' for i in range(seq,seq+5))
+                body=f'#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-MEDIA-SEQUENCE:{seq}\n{rows}'.encode()
             elif path in ('/live','/fixed','/high','/slow','/corrupt','/node607','/cookie/live','/delayed','/media403'):
                 seq=0 if path=='/fixed' else int(time.monotonic()-started)
                 rows=''.join(f'#EXTINF:1,\n{path}/{i}.ts\n' for i in range(seq,seq+5))
@@ -172,6 +177,11 @@ def main():
         recovered403=run(('redispatch403','quick'))
         refused403=run(('refused403','quick'))
         entry403=run(('entry403','quick'))
+        cadence=run(('cadence','continuous'))
+        intervals=[b-a for a,b in zip(entry_times['/cadence'],entry_times['/cadence'][1:])]
+        assert cadence['advanced'] and cadence['resolution'] and len(intervals)>=2,cadence
+        assert min(intervals)>=5.8,intervals
+        print('Target-duration 6s playlist request intervals:',intervals)
         assert recovered403['advanced'] and recovered403['entry_retries']==1 and entries['/redispatch403']==2,recovered403
         assert entry_times['/redispatch403'][1]-entry_times['/redispatch403'][0]>=8
         assert refused403['quality']=='未能验证' and refused403['httpStatus']==403 and entries['/refused403']==2,refused403

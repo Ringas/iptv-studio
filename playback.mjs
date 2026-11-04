@@ -78,6 +78,9 @@ async function observe(list,quick,headers,manifest,timing,progress){
   let resolution=null,firstReady=0,bytes=0,download=0,retries=0,gaps=0,segments=0,lastNew=now(),mediaStart=now();
   const window=Math.min(55,Math.max(24,3*list.target)),limit=quick?Math.min(24,Math.max(6,2*list.target)):window;
   const notes=[];
+  // RFC 8216 section 6.3.4: changed playlists wait a target duration;
+  // unchanged playlists wait half. Downloads/decoding already consume that wait.
+  let reloadAt=mediaStart+list.target;
   function result(quality){
     return {quality,seconds:round(now()-mediaStart),segments,bytes,speed:download?round(bytes/(download*1000)):null,
       resolution,play_seconds:round(now()-firstReady),stalls,stall_seconds:round(stall),advanced:newMedia,retries,gaps,note:notes};
@@ -85,8 +88,13 @@ async function observe(list,quick,headers,manifest,timing,progress){
   while(now()-mediaStart<limit){
     if(!pending.length){
       if(quick&&segments>=2&&verifiedNew)break;
-      await sleep(Math.max(1000,Math.min(3000,list.target*500)));
+      const delay=Math.max(0,reloadAt-now());
+      if(now()-mediaStart+delay>=limit)break;
+      if(delay)await sleep(delay*1000);
+      const priorKeys=list.segments.map(key).join('\n'),reloadStarted=now();
       list=await manifest(list.url);
+      const unchanged=list.segments.map(key).join('\n')===priorKeys;
+      reloadAt=reloadStarted+Math.max(.5,list.target*(unchanged ? .5 : 1));
       if(list.ended)throw unverified('直播清单已结束');
       const pos=list.segments.findIndex(s=>key(s)===last);
       pending=(pos>=0?list.segments.slice(pos+1):list.segments).filter(s=>!seen.has(key(s)));

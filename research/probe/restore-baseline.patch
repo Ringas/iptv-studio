@@ -1,0 +1,60 @@
+--- a/playback.mjs
++++ b/playback.mjs
+@@ -24,8 +24,7 @@
+   let bytes=0,sampled=0;
+   try{
+     if(res.status===429)throw rateLimitError(res,'媒体节点');
+-    if(!res.ok)throw Object.assign(new Error(`媒体节点 ${new URL(res.url).hostname} HTTP ${res.status}`),
+-      {httpStatus:res.status,stage:'media',retryable:res.status===403});
++    if(!res.ok)throw Object.assign(new Error(`媒体节点 ${new URL(res.url).hostname} HTTP ${res.status}`),{httpStatus:res.status});
+     if(seg.span && (res.status!==206||!res.headers.get('content-range')?.startsWith(`bytes ${seg.span.start}-${seg.span.end}/`)))
+       throw unverified('服务器未返回指定媒体字节范围');
+     if(/text\/html|json|mpegurl/i.test(res.headers.get('content-type')||''))throw new Error('媒体地址返回清单或错误页面');
+@@ -78,9 +77,6 @@
+   let resolution=null,firstReady=0,bytes=0,download=0,retries=0,gaps=0,segments=0,lastNew=now(),mediaStart=now();
+   const window=Math.min(55,Math.max(24,3*list.target)),limit=quick?Math.min(24,Math.max(6,2*list.target)):window;
+   const notes=[];
+-  // RFC 8216 section 6.3.4: changed playlists wait a target duration;
+-  // unchanged playlists wait half. Downloads/decoding already consume that wait.
+-  let reloadAt=mediaStart+list.target;
+   function result(quality){
+     return {quality,seconds:round(now()-mediaStart),segments,bytes,speed:download?round(bytes/(download*1000)):null,
+       resolution,play_seconds:round(now()-firstReady),stalls,stall_seconds:round(stall),advanced:newMedia,retries,gaps,note:notes};
+@@ -88,13 +84,8 @@
+   while(now()-mediaStart<limit){
+     if(!pending.length){
+       if(quick&&segments>=2&&verifiedNew)break;
+-      const delay=Math.max(0,reloadAt-now());
+-      if(now()-mediaStart+delay>=limit)break;
+-      if(delay)await sleep(delay*1000);
+-      const priorKeys=list.segments.map(key).join('\n'),reloadStarted=now();
++      await sleep(Math.max(1000,Math.min(3000,list.target*500)));
+       list=await manifest(list.url);
+-      const unchanged=list.segments.map(key).join('\n')===priorKeys;
+-      reloadAt=reloadStarted+Math.max(.5,list.target*(unchanged ? .5 : 1));
+       if(list.ended)throw unverified('直播清单已结束');
+       const pos=list.segments.findIndex(s=>key(s)===last);
+       pending=(pos>=0?list.segments.slice(pos+1):list.segments).filter(s=>!seen.has(key(s)));
+@@ -209,7 +200,7 @@
+     return {...r,method:mode,status:'保留',note:[...notes,...r.note]};
+   }catch(e){
+     const unknown=e.unverified||['非 HLS','特殊格式'].includes(e.status)||[401,403,429,607].includes(e.httpStatus);
+-    const retryable=e.retryable===true||[408,425,500,502,503,504,607].includes(e.httpStatus)||(!e.httpStatus&&!e.unverified&&!['非 HLS','特殊格式'].includes(e.status));
+-    return {method:mode,quality:unknown?'未能验证':'暂时失败',status:unknown?'未能验证':'暂时失败',httpStatus:e.httpStatus,stage:e.stage,retryAfter:e.retryAfter,retryable,note:[...notes,e.message],seconds:round(now()-started)};
++    const retryable=[408,425,500,502,503,504,607].includes(e.httpStatus)||(!e.httpStatus&&!e.unverified&&!['非 HLS','特殊格式'].includes(e.status));
++    return {method:mode,quality:unknown?'未能验证':'暂时失败',status:unknown?'未能验证':'暂时失败',httpStatus:e.httpStatus,retryAfter:e.retryAfter,retryable,note:[...notes,e.message],seconds:round(now()-started)};
+   }finally{clearInterval(tick);}
+ }
+--- a/probe.mjs
++++ b/probe.mjs
+@@ -215,8 +215,8 @@
+ const reconnects=[];
+ while((row.httpStatus===607||row.retryable) && process.env.IPTV_PROBE_MANAGED!=='1' && !process.argv.includes('--eit') && reconnects.length<1){
+   reconnects.push(row.note.at(-1)||row.status);
+-  if(process.argv.includes('--progress'))console.log(JSON.stringify({sample:true,phase:`首次未连通，等待 ${row.httpStatus===403?8:6} 秒后重新打开订阅入口（1/1）`}));
+-  await sleep(row.httpStatus===403?8000:6000);
++  if(process.argv.includes('--progress'))console.log(JSON.stringify({sample:true,phase:'首次未连通，等待 6 秒后重新打开订阅入口（1/1）'}));
++  await sleep(6000);
+   // Revalidate the original subscription URL, including cached dispatch redirects.
+   // Its query may be signed: keep the URL intact.
+   row=await testEntry(true);
