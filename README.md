@@ -4,11 +4,33 @@
 
 **在一个频道库里管理多个直播订阅，为电视和播放器提供统一的播放列表。**
 
-[快速部署](#快速部署) · [播放器地址](#播放器地址) · [下载发行版](https://github.com/Ringas/iptv-studio/releases/latest) · [Docker Hub](https://hub.docker.com/r/talktoo/iptv-studio)
+[界面预览](#界面预览) · [快速部署](#快速部署) · [播放器地址](#播放器地址) · [下载发行版](https://github.com/Ringas/iptv-studio/releases/latest) · [Docker Hub](https://hub.docker.com/r/talktoo/iptv-studio)
 
 </div>
 
 IPTV Studio（频道工作室）适合部署在 NAS 或家庭服务器上。首次启动时频道库为空，添加自己的 M3U 或分组 TXT 订阅后即可使用。比如两个订阅都收录了 CCTV-1，你可以把它们归到同一个频道，分别试看和检测两条线路，再决定让播放器使用哪一条。
+
+## 界面预览
+
+以下截图使用示例频道、节目单和订阅地址。
+
+**频道库** · 按分组浏览频道。每个色点代表一条线路，绿色表示已启用，灰色表示未启用。
+
+![频道库中的分组、线路状态和首选速率](docs/screenshots/library.webp)
+
+<details>
+<summary>频道详情 · 查看节目单、比较同一频道的两条线路</summary>
+
+![频道详情弹窗中的节目单、线路分辨率、速率与启停开关](docs/screenshots/channel-detail.webp)
+
+</details>
+
+<details>
+<summary>源管理 · 查看直播订阅和 XMLTV 节目单的更新计划</summary>
+
+![源管理中的订阅地址、启停状态和更新间隔](docs/screenshots/sources.webp)
+
+</details>
 
 ## 主要功能
 
