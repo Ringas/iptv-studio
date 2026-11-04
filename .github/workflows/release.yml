@@ -51,6 +51,7 @@ jobs:
           curl -fsS http://127.0.0.1:18787/live.m3u | grep -q '^#EXTM3U'
           docker exec iptv-check ffmpeg -version >/dev/null
           docker exec iptv-check node --version
+          export LC_ALL=C
           diff -u <(find "$OUT/context" -maxdepth 1 -type f ! -name Dockerfile -printf '%f\n' | sort) <(docker exec iptv-check python3 -c 'from pathlib import Path;print("\n".join(sorted(p.name for p in Path("/app").iterdir() if p.name != "data")))')
       - name: Publish GitHub Release and verified assets
         env:
