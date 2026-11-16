@@ -85,3 +85,8 @@ IPTV Studio（频道频谱）是一个面向 NAS 与家庭服务器的 **自托�
 curl -fsSL https://raw.githubusercontent.com/Ringas/iptv-studio/main/compose.yaml -o compose.yaml
 docker compose pull
 docker compose up -d
+```
+
+## 许可证
+
+本项目采用 **GNU General Public License v3.0（GPL-3.0-only）**，详情见 [`LICENSE`](LICENSE)。
