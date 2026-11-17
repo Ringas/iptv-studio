@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parents[1]
 BASE = 'https://hub.docker.com'
 REPOSITORY = '/v2/repositories/talktoo/iptv-studio/'
+SHORT_DESCRIPTION = 'IPTV 频道与多线路检测、节目单、统一订阅管理，默认上海时区。'
 
 
 def request(method, path, token=None, data=None):
@@ -57,9 +58,10 @@ def main(action):
         print('Docker Hub 认证及仓库读取检查通过')
     elif action == 'update':
         text = description()
-        request('PATCH', REPOSITORY, token, data={'description': '自托管 IPTV 频道、多线路检测、节目单与统一订阅管理；默认上海时区，适合 NAS 和 Docker。', 'full_description': text})
+        if len(SHORT_DESCRIPTION.encode('utf-8')) > 100: raise RuntimeError('Docker Hub 简介不能超过 100 字节')
+        request('PATCH', REPOSITORY, token, data={'description': SHORT_DESCRIPTION, 'full_description': text})
         updated = request('GET', REPOSITORY, token)
-        if updated.get('full_description') != text: raise RuntimeError('Docker Hub 说明保存后的内容不一致')
+        if updated.get('full_description') != text or updated.get('description') != SHORT_DESCRIPTION: raise RuntimeError('Docker Hub 说明保存后的内容不一致')
         print('Docker Hub 中文说明已更新并核对一致')
 
 

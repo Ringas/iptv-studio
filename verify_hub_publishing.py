@@ -6,6 +6,7 @@ from urllib.error import HTTPError
 from scripts import docker_hub as hub
 
 text=hub.description()
+assert len(hub.SHORT_DESCRIPTION.encode('utf-8'))<=100
 assert 'v1.1.1' in text and 'linux/amd64' in text and 'IPTV_LOG_LEVEL' in text
 assert '(docs/' not in text and 'https://raw.githubusercontent.com/Ringas/iptv-studio/main/docs/screenshots/library.jpg' in text
 calls=[]
@@ -13,7 +14,7 @@ def fake(method,path,token=None,data=None,missing_ok=False):
     calls.append((method,path,data))
     if path=='/v2/auth/token':return {'access_token':'temporary-test-bearer'}
     if method=='PATCH':return {}
-    if path==hub.REPOSITORY:return {'full_description':text}
+    if path==hub.REPOSITORY:return {'full_description':text,'description':hub.SHORT_DESCRIPTION}
     if method=='DELETE':return {}
     return {} if sum(1 for method,_,_ in calls if method=='GET')==1 else None
 with patch.dict(hub.os.environ,{'HUB_TOKEN':'private-test-token'}),patch.object(hub,'request',side_effect=fake):
