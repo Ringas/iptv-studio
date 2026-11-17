@@ -187,14 +187,14 @@ for(const option of JSON.parse(process.env.IPTV_PROBE_OPTIONS||'[]')){
     }
   }
 }
-const timing={started:performance.now()/1000};
+const timing={started:performance.now()/1000,pipeline:process.argv.includes('--pipeline')};
 async function testEntry(reloadEntry=false){
  const entry=process.argv[2];
  const row={at:new Date().toISOString(),bytes:0,requests:0,full:0,note:[]};
  try {
   if(process.argv.includes('--eit')){
     row.packets=await eitSample(process.argv[2],playlistHeaders,headers,parseManifest);
-  }else if(process.argv.includes('--continuous')||process.argv.includes('--quick')){
+  }else if(process.argv.includes('--continuous')||process.argv.includes('--quick')||process.argv.includes('--pipeline')){
     Object.assign(row,await playbackProbe(entry,process.argv.includes('--quick'),headers,
       url=>playlist(url,row.note,0,true,reloadEntry&&url===entry),timing));
   }else{

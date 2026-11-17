@@ -80,7 +80,9 @@ class RateLimitTest(unittest.TestCase):
                     result=json.loads(c.execute('select result from tests where url=?',(a,)).fetchone()[0])
                     self.assertGreater(result['speed'],100)
                     self.assertIn('429',str(result['note']))
-                    self.assertEqual(c.execute('select result from tests where url=?',(long_url,)).fetchone()[0],prior)
+                    saved=json.loads(c.execute('select result from tests where url=?',(long_url,)).fetchone()[0])
+                    self.assertEqual(saved.pop('last_attempt')['error_category'],'rate_limited')
+                    self.assertEqual(saved,json.loads(prior))
                     self.assertEqual(c.execute('select mode from route_modes where url=?',(long_url,)).fetchone()[0],'off')
                 self.assertIn('待确认',service.job['message'])
             service.job['stop_line']=False

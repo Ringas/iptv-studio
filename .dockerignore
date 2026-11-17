@@ -8,6 +8,8 @@
 !eit-input.mjs
 !playback.mjs
 !media-http.mjs
+!gateway-lease.mjs
+!dual_probe.py
 !probe.mjs
 !resolution.mjs
 !index.html
@@ -17,3 +19,4 @@
 !webplay.py
 !hls.min.js
 !hls-LICENSE.txt
+!LICENSE

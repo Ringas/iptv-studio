@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {recoveryDecision} from './playback.mjs';
+const good={pipeline:true,managed:true,rechecking:false,stalls:1,stall_seconds:.4,gaps:0,retries:0,advanced:true,decoded:true,decoded_frames:6,height:480,speed:75};
+const policy={criteria:'both',min_speed:50,min_height:480};
+assert(!recoveryDecision(good).eligible);
+assert(recoveryDecision({...good,policy}).eligible);
+for(const bad of [{speed:50},{height:479},{decoded:false},{advanced:false},{stalls:2},{decoded_frames:2}])assert(!recoveryDecision({...good,policy,...bad}).eligible);
+assert(recoveryDecision({...good,speed:1,policy:{...policy,criteria:'resolution'}}).eligible);
+assert(recoveryDecision({...good,height:240,policy:{...policy,criteria:'speed'}}).eligible);
+process.env.IPTV_PROBE_POLICY=JSON.stringify(policy);
+assert(recoveryDecision(good).eligible);
+console.log('PASS: configured recovery thresholds, strict boundaries, optional criteria, decode and live requirements unchanged.');

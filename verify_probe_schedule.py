@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 import service
 
-GOOD={'quality':'初检可播','opening':'直连可播','advanced':True,'speed':800,'seconds':3,'note':[]}
+GOOD={'quality':'初检可播','opening':'直连可播','advanced':True,'resolution':{'height':720},'speed':800,'seconds':3,'note':[]}
 TIMEOUT={'quality':'暂时失败','status':'暂时失败','retryable':True,'note':['入口超时']}
 
 class Clock:
@@ -58,11 +58,11 @@ def main():
     assert sum(u==a for u,_,_ in calls)==2 and tests[a]['entry_retries']==1,tests
 
     calls,tests,modes,_=exercise([a],lambda *_:{'httpStatus':429,'retryAfter':300,'note':['长时间冷却']},seed=True)
-    assert len(calls)==1 and tests[a]==GOOD and len(modes)==1
+    assert len(calls)==1 and {k:v for k,v in tests[a].items() if k!='last_attempt'}==GOOD and len(modes)==1
     assert service.job['message']=='测速完成 · 0 条通过 · 0 条未通过 · 1 条待确认'
 
     calls,tests,_,clock=exercise([a],lambda *_:{'httpStatus':429,'retryAfter':6,'note':['持续限流']})
-    assert len(calls)==2 and not tests,calls
+    assert len(calls)==2 and tests[a]['last_attempt']['error_category']=='rate_limited',calls
     assert service.gateway_windows['gateway.test'][1]-clock>=12
 
     clock=Clock();service.gateway_windows.clear();service.gateway_limits.clear()

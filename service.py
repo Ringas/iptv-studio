@@ -12,6 +12,8 @@ import subprocess
 import threading
 import time
 import uuid
+import tempfile
+from dual_probe import context as probe_context, first_pass, store_cooldown, release_leases, active_states
 from time import monotonic as gateway_clock
 from email.utils import parsedate_to_datetime
 from contextlib import contextmanager
@@ -22,15 +24,16 @@ from http.client import HTTPException
 from urllib.parse import urlsplit,urljoin
 from grouping import programme_profiles
 from eit import programmes
-from catalog import parse_playlist, playlist_guides, build, selected, guide, xmlroot, xmltv_logos, normalize, assess, speed_display
+from catalog import classify_result, parse_playlist, playlist_guides, build, selected, guide, xmlroot, xmltv_logos, normalize, assess, speed_display, qualification_policy, policy_changed, activation_assessment
 
 ROOT=Path(__file__).resolve().parent
 DATA=Path(os.getenv('DATA_DIR',ROOT/'data'))
 LOCK=threading.RLock()
 job={'running':False,'message':'空闲','done':0,'total':0,'active_url':None,'sample':None,'revision':0}
 probe_process=None
-DEFAULT={'minutes':360,'auto_probe':False,'strict':True,'mode':'merge','next':0,
-         'probe_mode':'adaptive','criteria':'speed','min_speed':100,'min_height':720}
+dual_lease_dir=None
+DEFAULT={'minutes':480,'auto_probe':True,'strict':True,'mode':'merge','next':0,
+         'probe_mode':'adaptive','criteria':'both','min_speed':100,'min_height':720}
 
 # The same gateway can serve several subscriptions. Share its quiet period across jobs.
 gateway_windows={}
@@ -63,6 +66,13 @@ def cool_gateway(url,seconds):
         last,blocked,opened=gateway_windows.get(host,(0,0,set()))
         gateway_windows[host]=(last,max(blocked,now+max(min(120,6*2**min(hits-1,5)),seconds or 0)),opened)
 
+def extend_gateway(url,seconds):
+    # Enrich an already observed 429 with its parsed body without counting a new hit.
+    host=urlsplit(url).netloc.lower()
+    with gateway_lock:
+        last,blocked,opened=gateway_windows.get(host,(0,0,set()))
+        gateway_windows[host]=(last,max(blocked,gateway_clock()+seconds),opened)
+
 def needs_recheck(result,was_usable=False):
     if result.get('quality')=='可播但不稳':return True
     if result.get('quality') not in ('暂时失败','未能验证') and result.get('status')!='测速失败':return False
@@ -77,7 +87,11 @@ def db():
     finally: conn.close()
 
 def encode(x): return json.dumps(x,ensure_ascii=False)
-def config(c): return {**DEFAULT,**json.loads(c.execute("select value from settings").fetchone()[0])}
+def config(c):
+    cfg={**DEFAULT,**json.loads(c.execute("select value from settings").fetchone()[0])}
+    # Explicitly saved UI choice wins; environment is only an initial fallback.
+    cfg['probe_workers']=2 if str(cfg.get('probe_workers',os.getenv('IPTV_PROBE_WORKERS','1')))=='2' else 1
+    return cfg
 def save_config(c, cfg): c.execute("update settings set value=?",(encode(cfg),))
 def log(c,text,kind='history',**fields):
     c.execute("insert into logs(ts,message,kind,details) values(?,?,?,?)",
@@ -363,6 +377,15 @@ def stop_probe(run_id,url=None):
     with LOCK:
         if not job['running'] or job.get('run_id')!=run_id or not job.get('probing'):
             raise ValueError('本次测速已结束')
+        active=active_states
+        if active:
+            if url is not None and url not in active:raise ValueError('这条线路的测速已结束')
+            if url is None:job['stop_queue']=True
+            for address,state in active.items():
+                if url is None or address==url:
+                    state['stop']='已终止' if url is None else '已跳过'
+                    if state['process'] is not None:state['process'].kill()
+            return
         if url is not None and url!=job['active_url']:
             raise ValueError('这条线路的测速已结束')
         if url is None: job['stop_queue']=True
@@ -372,29 +395,63 @@ def stop_probe(run_id,url=None):
 
 def probe(url,method,options):
     global probe_process
+    state=getattr(probe_context,'state',None)
     if urlsplit(url).scheme not in ('http','https'):
         return {'method':method,'quality':'未能验证','status':'未能验证','note':['当前检测器仅支持 HTTP(S) HLS']}
     try:
         args=['node',str(ROOT/'probe.mjs'),url,'--progress']
         if method!='legacy':args.append('--'+method)
+        lease_dir=state['directory'] if state else dual_lease_dir
+        owner=state['owner'] if state else uuid.uuid4().hex
+        gateway_events=[];probe_started=time.monotonic()
+        extra={'IPTV_GATEWAY_LEASE_DIR':lease_dir,'IPTV_GATEWAY_OWNER':owner} if lease_dir else {}
         with subprocess.Popen(args,env={**os.environ,'IPTV_PROBE_OPTIONS':encode(options),'IPTV_PROBE_MANAGED':'1' if method!='legacy' else '0',
-                                      'IPTV_PROBE_RECHECK':'1' if job.get('rechecking') else '0'},stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,encoding='utf-8') as proc:
+                                      'IPTV_PROBE_RECHECK':'1' if (state['rechecking'] if state else job.get('rechecking')) else '0','IPTV_PROBE_MIN_HEIGHT':str(job.get('probe_policy',DEFAULT)['min_height']) if job.get('pipeline') and job.get('probe_policy',DEFAULT)['criteria'] in ('both','resolution') else '0','IPTV_PROBE_POLICY':encode(job.get('probe_policy',DEFAULT)),**extra},stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,encoding='utf-8') as proc:
             with LOCK:
-                probe_process=proc
-                if job['stop_line']: proc.kill()
-            timeout=threading.Timer(120 if method=='continuous' else 60,proc.kill)
+                if state:state['process']=proc
+                else:probe_process=proc
+                if (state['stop'] if state else job['stop_line']) or job['stop_queue']:proc.kill()
+            timeout=threading.Timer(120 if method in ('continuous','pipeline') else 60,proc.kill)
             timeout.start()
             result=None
             try:
                 for line in proc.stdout:
                     event=json.loads(line)
+                    if event.get('gateway_acquired') and lease_dir:
+                        gateway_events.append({'host':event['host'],'seconds':time.monotonic()-probe_started,'event':'acquired'})
+                        continue
+                    if event.get('gateway_limit') and lease_dir:
+                        gateway_events.append({'host':event['host'],'seconds':time.monotonic()-probe_started,'event':'cooldown','retry_after':event['seconds']})
+                        with LOCK:
+                            cool_gateway('https://'+event['host'],event['seconds'])
+                            store_cooldown(lease_dir,event['host'],gateway_delay('https://'+event['host']))
+                        continue
                     if event.get('sample'):
-                        with LOCK: job.update(sample=event.get('phase') or speed_display(event.get('speed')),sample_seconds=event.get('seconds',0))
+                        with LOCK:
+                            target=state if state else job
+                            target.update(sample=event.get('phase') or speed_display(event.get('speed')),sample_seconds=event.get('seconds',0))
+                            if state:
+                                job['active_lines'][url].update(sample=target['sample'],sample_seconds=target['sample_seconds'])
+                                if job.get('active_url')==url:job.update(sample=target['sample'],sample_seconds=target['sample_seconds'])
                     else: result=event
-                if proc.wait()==0 and result is not None:return result
+                if proc.wait()==0 and result is not None:
+                    if lease_dir:
+                        if result.get('httpStatus')==429:
+                            for event in gateway_events:
+                                if event['event']=='cooldown':
+                                    address='https://'+event['host']
+                                    extend_gateway(address,max(event['retry_after'],result.get('retryAfter') or 0))
+                                    store_cooldown(lease_dir,event['host'],gateway_delay(address))
+                        result['gateway_sessions']=gateway_events
+                    return result
             finally:
                 timeout.cancel()
-                with LOCK: probe_process=None
+                if proc.poll() is None:proc.kill()
+                proc.wait()
+                if lease_dir:release_leases(lease_dir,owner)
+                with LOCK:
+                    if state:state['process']=None
+                    else:probe_process=None
             return {'status':'测速失败','quality':'暂时失败','retryable':True,'note':['测速进程未返回完整结果或已超时']}
     except FileNotFoundError: raise RuntimeError('测速需要安装 Node.js 22 或以上')
 
@@ -402,6 +459,8 @@ def progress(message,done,total):
     with LOCK: job.update(message=message,done=done,total=total)
 
 def run(action,requested):
+    global dual_lease_dir
+    lease_temp=None
     failures=0
     try:
         if action in ('refresh','scheduled'):
@@ -438,7 +497,8 @@ def run(action,requested):
             with db() as c: channels=catalog(c)
             routes={}
             for ch in channels:
-                if requested is None and not ch['enabled']: continue
+                # Catalog already excludes disabled sources and hidden content.
+                # Publication state must not prevent unmeasured/failed routes from recovering.
                 for line in ch['lines']:
                     url=line['url']
                     if action=='scheduled' and url not in updated_urls: continue
@@ -451,19 +511,25 @@ def run(action,requested):
                         if name not in info['sources']: info['sources'].append(name)
             targets=list(requested) if requested is not None else list(routes)
             retries={}
-            fine=set()
             pipeline=cfg['probe_mode']=='pipeline'
-            if pipeline:cfg.update(criteria='both',min_speed=100,min_height=720)
             recheck_reasons={}
             passed=failed=uncertain=stopped=skipped=0
             outcomes={}
-            with LOCK: job.update(probing=True,total=len(targets),done=0)
+            with LOCK: job.update(probing=True,total=len(targets),done=0,pipeline=pipeline,probe_policy={k:cfg[k] for k in ('criteria','min_speed','min_height')})
             limited_once={}
+            # Opt-in controlled mode; other detection modes keep their existing scheduler.
+            dual=pipeline and cfg['probe_workers']==2
+            prefetched={}
+            if dual:
+                lease_temp=tempfile.TemporaryDirectory(prefix='iptv-gateway-leases-')
+                dual_lease_dir=lease_temp.name
+                prefetched=first_pass(targets,routes,probe,job,LOCK,gateway_delay,cool_gateway,dual_lease_dir)
+                with LOCK:job['active_lines']={}
             i=0
             while i<len(targets):
                 u=targets[i]
                 def wait_for(address):return max(gateway_delay(address),retries[address]-time.monotonic() if address in retries else 0,0)
-                if wait_for(u)>0:
+                if u not in prefetched and wait_for(u)>0:
                     ready=next((k for k in range(i+1,len(targets)) if wait_for(targets[k])<=0),None)
                     if ready is not None:
                         targets[i],targets[ready]=targets[ready],u
@@ -471,27 +537,41 @@ def run(action,requested):
                 info=routes.get(u,{'channels':[],'sources':[]})
                 channel=' / '.join(info['channels'])
                 with LOCK:
-                    if job['stop_queue']: break
+                    if job['stop_queue'] and u not in prefetched: break
                     job.update(message=f'测速 {i+1}/{len(targets)} · {channel}',done=i,active_url=u,active_channel=channel,sample=None,sample_seconds=0,stop_line=False,rechecking=u in retries)
                 method=cfg['probe_mode']
-                if pipeline:method='continuous' if u in fine or u in retries else 'quick'
+                if pipeline:method='continuous' if u in retries else 'pipeline'
                 if method=='adaptive':
                     method='continuous' if info.get('deep') or u in retries else 'quick'
+                cached=None
                 try:
-                    delay=wait_for(u)
+                    cached=prefetched.pop(u,None)
+                    delay=0 if cached else wait_for(u)
                     while 0<delay<=30 and not job['stop_line']:
                         with LOCK:job['sample']=f'{"间隔复测" if u in retries else "入口冷却"}，约 {math.ceil(delay)} 秒后测试'
                         time.sleep(min(delay,.25))
                         delay=wait_for(u)
-                    if not delay:delay=gateway_delay(u,reserve=True)
-                    if job['stop_line']:result={}
+                    if not delay and not cached:delay=gateway_delay(u,reserve=True)
+                    if cached:
+                        result,finished,stop_reason=cached
+                        job['stop_line']=stop_reason
+                    elif job['stop_line']:result={}
                     elif delay:result={'httpStatus':429,'deferred':True,'note':[f'入口仍在限流冷却，约 {math.ceil(delay)} 秒后可复测']}
                     else:result=probe(u,method,info.get('options',[]))
-                    if pipeline and u not in fine and u not in retries and result.get('advanced'):
-                        fine.add(u)
-                        targets.append(targets.pop(i))
-                        continue
                 except Exception as exc: result={'status':'测速失败','quality':'暂时失败','retryable':True,'note':[str(exc)]}
+                is_recheck=bool(job.get('rechecking'))
+                result=classify_result(result)
+                if dual and cached and not job['stop_line']:
+                    result['dual_initial']=True
+                    # Assess fresh evidence, never a historical grace allowance.
+                    fresh={k:v for k,v in result.items() if k not in ('grace','stable_qualified')}
+                    if assess(fresh,cfg)!='保留' or not result.get('advanced'):
+                        result['isolation_required']=True
+                    if result.get('retry_deferred')=='gateway_isolation':
+                        result.update(inconclusive=True,error_category='resource_contention',retryable=True)
+                if result.get('inconclusive') or result.get('httpStatus')==429:
+                    result.setdefault('at',time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()))
+                    result['evidence']['qualification']={**qualification_policy(cfg),'state':'not_verified','assessment':'未能验证'}
                 with LOCK, db() as c:
                     fields=dict(channel=channel,source=' / '.join(info['sources']),url=u)
                     if job['stop_line']:
@@ -502,7 +582,7 @@ def run(action,requested):
                     elif result.get('httpStatus')==429:
                         reason='；'.join(result.get('note',[]))
                         if not result.get('deferred'):
-                            cool_gateway(u,result.get('retryAfter'))
+                            if not result.pop('_entry_cooled',False):cool_gateway(u,result.get('retryAfter'))
                             if u not in retries and gateway_delay(u)<=30:
                                 limited_once[u]=reason
                                 retries[u]=time.monotonic()+gateway_delay(u)
@@ -510,7 +590,24 @@ def run(action,requested):
                                 continue
                         uncertain+=1
                         outcomes[u]='uncertain'
+                        prior=c.execute('select result from tests where url=?',(u,)).fetchone()
+                        kept=json.loads(prior[0]) if prior else {'inconclusive':True,'status':'未能验证'}
+                        kept['last_attempt']=result
+                        c.execute('insert or replace into tests values(?,?)',(u,encode(kept)))
                         log(c,'上游限流，保留原测速及启停状态','probe',**fields,result='待复测',reason=reason)
+                    elif result.get('inconclusive'):
+                        prior=c.execute('select result from tests where url=?',(u,)).fetchone()
+                        kept=json.loads(prior[0]) if prior else {'inconclusive':True,'status':'未能验证'}
+                        kept['last_attempt']={**result,'at':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime())}
+                        c.execute('insert or replace into tests values(?,?)',(u,encode(kept)))
+                        if u not in retries and (result.get('retryable') or result.get('isolation_required')):
+                            recheck_reasons[u]='；'.join(result.get('note',[]))[:500]
+                            retries[u]=(finished if dual and cached else time.monotonic())+(12 if result.get('httpStatus')==607 else 8)
+                            targets.append(u)
+                            job['total']=len(targets)
+                        uncertain+=1
+                        outcomes[u]='uncertain'
+                        log(c,'本次未能验证，保留原测速及启停状态','probe',**fields,result='未能验证',reason='；'.join(result.get('note',[])),error_category=result.get('error_category'))
                     else:
                         if u in limited_once:
                             result.setdefault('note',[]).insert(0,'入口限流冷却后复测；此前响应：'+limited_once[u])
@@ -522,8 +619,9 @@ def run(action,requested):
                             if result.get('quality')=='未能验证' and u not in retries:
                                 result['retryable']=True
                         direct_history=previous.get('direct_history',[])
+                        if not direct_history and previous.get('last_attempt') and u in retries:direct_history=[0]
                         if method!='legacy':
-                            result.setdefault('method',method)
+                            result.setdefault('method','continuous' if pipeline else method)
                             result.setdefault('quality','暂时失败')
                             # A deferred recheck belongs to the same independent test.
                             if u in retries:
@@ -536,11 +634,11 @@ def run(action,requested):
                                 direct_history=(direct_history+[int(result.get('opening')=='直连可播')])[-5:]
                             if result['quality'] in ('暂时失败','未能验证'):
                                 was_usable=assess(previous,cfg)=='保留'
-                                if was_usable or (previous.get('grace') and result['quality']=='未能验证'):
+                                if was_usable or (previous.get('grace') and policy_changed(previous,cfg) is not True and result['quality']=='未能验证'):
                                     result['grace']=True
-                            if u not in retries and needs_recheck(result,assess(previous,cfg)=='保留'):
+                            if u not in retries and (needs_recheck(result,assess(previous,cfg)=='保留') or result.get('isolation_required')):
                                 recheck_reasons[u]='；'.join(result.get('note',[]))[:500]
-                                retries[u]=time.monotonic()+(12 if result.get('httpStatus')==607 else 8)
+                                retries[u]=(finished if dual and cached else time.monotonic())+(12 if result.get('httpStatus')==607 else 8)
                                 targets.append(u)
                                 job['total']=len(targets)
                                 result.setdefault('note',[]).append('已安排间隔复测，本轮最多复测一次')
@@ -549,21 +647,28 @@ def run(action,requested):
                             result['recent']=(history+[int(result['quality'] in ('流畅','初检可播'))])[-5:]
                         if direct_history:result['direct_history']=direct_history
                         if pipeline:
-                            history=previous.get('qualification_history',[])
+                            same_policy=policy_changed(previous,cfg) is not True
+                            history=previous.get('qualification_history',[]) if same_policy else []
                             if previous.get('qualification_pending'):history=history[:-1]
                             qualifies=assess(result,cfg)=='保留' and result.get('advanced',False)
                             result['qualification_history']=(history+[int(qualifies)])[-3:]
                             result['qualification_pending']=u in targets[i+1:]
                             # Retain a previously qualified route through one independent failure.
-                            result['stable_qualified']=qualifies or (previous.get('stable_qualified',False) and sum(result['qualification_history'][-2:])>=1)
+                            result['stable_qualified']=qualifies or (same_policy and previous.get('stable_qualified',False) and sum(result['qualification_history'][-2:])>=1)
                             result['grace']=result['stable_qualified'] or result['qualification_pending']
+                        result.pop('recheck_control',None)
+                        if is_recheck:
+                            result['recheck_control']={'assessment':activation_assessment(previous,cfg),'policy':qualification_policy(cfg)}
+                            result.setdefault('note',[]).append('本轮异常复测仅更新检测记录，保留复测前启停状态；下一轮首测再判定')
                         assessment=assess(result,cfg)
+                        result['evidence']['qualification']={'state':'passed' if assessment=='保留' else 'not_verified' if assessment in ('未能验证','暂时失败','待复测','未测') else 'failed','assessment':assessment,'criteria':cfg['criteria'],'min_speed':cfg['min_speed'],'min_height':cfg['min_height']}
                         reason=[assessment,*result.get('note',[])]
                         if assessment=='速率未达标': reason.append(f"要求严格高于 {cfg['min_speed']} KB/s")
                         if assessment in ('分辨率未达标','分辨率未知'): reason.append(f"要求高度至少 {cfg['min_height']} 像素")
                         quality=result.get('quality')
                         if quality=='可播但不稳' and result.get('stalls',0)>0:quality='易卡顿'
                         metrics=[v for v in (result.get('opening'),quality) if v]
+                        if result.get('recheck_control'):metrics.append('异常复测，启停状态保持不变')
                         if result.get('httpStatus')==607:metrics.append('节点返回 607')
                         if result.get('entry_retries'):metrics.append(f"入口重连 {result['entry_retries']} 次")
                         if result.get('startup') is not None:metrics.append(f"本轮总起播耗时 {result['startup']} 秒")
@@ -580,8 +685,9 @@ def run(action,requested):
                         outcomes[u]='passed' if ok else 'uncertain' if pending else 'failed'
                         log(c,' · '.join(metrics),'probe',**fields,result='通过' if ok else assessment if assessment in ('未能验证','暂时失败','待复测') else '未通过',reason='' if ok else '；'.join(reason))
                         c.execute('insert or replace into tests values(?,?)',(u,encode(result)))
-                        # The measurement is shared by all channel entries using this URL.
-                        c.execute('delete from route_modes where url=?',(u,))
+                        # Every detection entry uses the same first-pass activation policy.
+                        if cfg['strict'] and not is_recheck and assessment in ('保留','速率未达标','分辨率未达标'):
+                            c.execute('delete from route_modes where url=?',(u,))
                     job.update(done=i+1,active_url=None,sample=None,revision=job['revision']+1)
                 i+=1
             summary='测速已终止' if job['stop_queue'] else '测速完成'
@@ -599,11 +705,13 @@ def run(action,requested):
     except Exception as exc:
         message='任务中断 · '+str(exc)
     finally:
+        dual_lease_dir=None
+        if lease_temp:lease_temp.cleanup()
         with LOCK:
             if message.startswith('任务中断'):
                 with db() as c: log(c,message)
             if action in ('scheduled','refresh'):job['revision']+=1
-            job.update(running=False,message=message,probing=False,active_url=None,active_channel='',sample=None)
+            job.update(running=False,message=message,probing=False,active_url=None,active_channel='',sample=None,active_lines={})
 
 def start(action,url=None,urls=None):
     with LOCK:
@@ -690,7 +798,9 @@ def edit(kind,p):
             cfg=config(c)
             hours=hours_value(p['hours'] if 'hours' in p else float(p.get('minutes',cfg['minutes']))/60)
             if p['mode'] not in ('merge','best'): raise ValueError('设置无效')
-            method=p.get('probe_mode',cfg['probe_mode'])
+            selected=p.get('probe_mode',cfg['probe_mode'])
+            method='pipeline' if selected=='pipeline_dual' else selected
+            if 'probe_mode' in p:cfg['probe_workers']=2 if selected=='pipeline_dual' else 1
             if method not in ('adaptive','continuous','legacy','pipeline'):raise ValueError('无效检测方式')
             criteria=p.get('criteria',cfg['criteria'])
             speed=float(p.get('min_speed',cfg['min_speed']))
@@ -698,7 +808,6 @@ def edit(kind,p):
             if criteria not in ('speed','resolution','both') or not math.isfinite(speed) or speed<0 or not 1<=height<=16384:
                 raise ValueError('测速条件无效')
             cfg.update(criteria=criteria,min_speed=speed,min_height=height)
-            if method=='pipeline':cfg.update(criteria='both',min_speed=100,min_height=720)
             if hours!=cfg['minutes']/60:
                 c.execute('update sources set next_update=? where enabled and interval_hours is null',(deadline(hours),))
             cfg.update(probe_mode=method,minutes=hours*60,mode=p['mode'],auto_probe=bool(p['auto_probe']),strict=bool(p['strict']))

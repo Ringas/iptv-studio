@@ -132,21 +132,75 @@ def speed_display(kbps):
     if kbps>=1024: return f'{kbps/1024:.2f} MB/s'
     return f'{kbps:.2f} KB/s'
 
+# A failed attempt is evidence about this request, not a permanent source verdict.
+def classify_result(result):
+    result=dict(result)
+    result['evidence']={**{key:{'state':'not_verified'} for key in ('entry','manifest','media','decode','live','qualification')},**result.get('evidence',{})}
+    code=result.get('httpStatus')
+    notes=' '.join(map(str,result.get('note',[]))).lower()
+    if code==429: category='rate_limited'
+    elif code==607 or any(word in notes for word in ('network policy','policy blocked','blocked by policy','网络策略','策略拦截')): category='network_restricted'
+    elif code in (408,504) or any(word in notes for word in ('timeout','timed out','超时','etimedout','aborterror')): category='timeout'
+    elif code in (401,403): category='access_denied'
+    elif code in (404,410): category='not_found'
+    elif code and code>=500: category='upstream_error'
+    elif result.get('quality') in ('暂时失败','未能验证'): category='unverified'
+    elif result.get('status') in ('非 HLS','特殊格式'): category='unsupported'
+    else: category=None
+    if category:
+        result['error_category']=category
+        if category in ('network_restricted','timeout'):result.setdefault('retryable',True)
+        result['inconclusive']=category in ('rate_limited','network_restricted','timeout')
+    return result
+
+def qualification_policy(settings):
+    return {k:settings.get(k,default) for k,default in (('criteria','both'),('min_speed',100),('min_height',720))}
+
+def policy_changed(test, settings):
+    recorded=test.get('evidence',{}).get('qualification',{})
+    if not all(k in recorded for k in ('criteria','min_speed','min_height')):return None
+    current=qualification_policy(settings)
+    return recorded['criteria']!=current['criteria'] or any(recorded[k]!=current[k] for k in (
+        ('min_speed','min_height') if current['criteria']=='both' else ('min_speed',) if current['criteria']=='speed' else ('min_height',)))
+
+def assessment_state(assessment):
+    return 'passed' if assessment=='保留' else 'unmeasured' if assessment=='未测' else 'not_verified' if assessment in ('未能验证','暂时失败','待复测','历史结论未知') else 'failed'
+
+def activation_assessment(test, settings):
+    control=test.get('recheck_control')
+    if control and policy_changed({'evidence':{'qualification':control['policy']}},settings) is False:
+        return control['assessment']
+    return assess(test,settings)
+
+def result_views(test, settings):
+    # Immutable historical evidence is distinct from a projection under today's policy.
+    recorded=test.get('evidence',{}).get('qualification',{})
+    historical=recorded.get('assessment') or ('未测' if not test or set(test)<= {'inconclusive','status','last_attempt'} else '历史结论未知')
+    detection={'assessment':historical,'state':assessment_state(historical),'at':test.get('at'),
+               'policy':qualification_policy(recorded) if all(k in recorded for k in ('criteria','min_speed','min_height')) else None}
+    current=assess(test,settings)
+    return {'detection':detection,'activation_assessment':activation_assessment(test,settings),'current_qualification':{'assessment':current,'state':assessment_state(current),
+            'policy':qualification_policy(settings),'policy_changed':policy_changed(test,settings),'based_on':test.get('at'),
+            'retained_after_attempt':bool(test.get('last_attempt'))}}
+
 def assess(test, settings):
+    if test.get('inconclusive'):return '未能验证'
+    if (test.get('grace') or test.get('stable_qualified')) and test.get('quality') in ('暂时失败','未能验证') and policy_changed(test,settings):
+        return '未能验证'
     if test.get('pipeline'):
         if test.get('stable_qualified') and test.get('quality') in ('暂时失败','未能验证'):return '待复测'
-        settings={**settings,'criteria':'both','min_speed':100,'min_height':720}
     if test.get('method') in ('quick','continuous'):
         if test.get('quality') in ('暂时失败','未能验证'):
             return '待复测' if test.get('grace') else test['quality']
     elif test.get('seconds')!=8 or test.get('speed') is None:
         return test.get('status','未测')
-    criteria=settings.get('criteria','speed')
+    criteria=settings.get('criteria','both')
     if criteria in ('speed','both') and test['speed']<=settings.get('min_speed',100): return '速率未达标'
     if criteria in ('resolution','both'):
         size=test.get('resolution') or {}
         if not size.get('height'): return '分辨率未知'
         if size['height']<settings.get('min_height',720): return '分辨率未达标'
+    if test.get('pipeline') and not test.get('advanced'):return '未能验证'
     return '保留'
 
 def quality_order(line,criteria):
@@ -155,16 +209,18 @@ def quality_order(line,criteria):
     tier=0 if status=='保留' else 1 if status=='未测' else 2
     speed=test.get('speed')
     height=(test.get('resolution') or {}).get('height')
-    metrics=(-(speed if speed is not None else -1),-(height or 0))
-    if criteria in ('resolution','both'):metrics=metrics[::-1]
+    # Rank playback quality before bandwidth: a fast but unstable route is not primary.
     quality={'流畅':0,'可播但不稳':2}.get(test.get('quality'),1)
+    # Successful sample count alone must not outrank picture quality or speed.
     history=test.get('recent',[])
-    reliability=(sum(history)+1)/(len(history)+2)
+    failure_rate=(len(history)-sum(history))/len(history) if history else 0
     openings=test.get('direct_history',[])
-    direct_rate=(sum(openings)+1)/(len(openings)+2)
-    preferred_height=-(height or 0) if criteria in ('resolution','both') else 0
+    direct_failure_rate=(len(openings)-sum(openings))/len(openings) if openings else 0
     recovered=test.get('opening') in ('重连后可播','复核后可播','复测后可播') or bool(test.get('intermittent'))
-    return (tier,quality,preferred_height,-direct_rate,recovered,-reliability,test.get('stalls',0),test.get('startup',999),*metrics,line['priority'],line['url'])
+    return (tier,quality,direct_failure_rate,recovered,failure_rate,test.get('stalls') or 0,
+            -(height or 0),-(speed if speed is not None else -1),
+            test.get('startup') if test.get('startup') is not None else 999,line['priority'],line['url'])
+
 
 def route_mode(members,url,modes):
     values={modes.get((name,url)) for name in members}
@@ -178,7 +234,7 @@ def build(sources, tests, overrides, route_modes=None, settings=None, profiles=N
     hidden=hidden or set()
     channel_inventory=defaultdict(dict)
     standalone={(r['name'],r['url']):r for r in hidden_items or [] if r['kind']=='route'}
-    criteria=(settings or {}).get('criteria','speed')
+    criteria=(settings or {}).get('criteria','both')
     subscription_logos={}
     for src in sources:  # 数字小的订阅优先提供元数据。
         for item in src['items']:
@@ -270,9 +326,10 @@ def build(sources, tests, overrides, route_modes=None, settings=None, profiles=N
                 evidence=gateway or evidence
             r['platform'],r['platform_host']=evidence or gateway or platform_evidence([entry]) or ('来源未识别','')
             r['mode']=route_mode(r['members'],r['url'],route_modes)
-            r['assessment']=assess(r['test'],settings or {})
+            r.update(result_views(r['test'],settings or {}))
+            r['assessment']=r['current_qualification']['assessment']
             r['speed_display']=speed_display(r['test'].get('speed'))
-        c['lines']=sorted(c['lines'].values(), key=lambda r:quality_order(r,criteria))
+        c['lines']=sorted(c['lines'].values(), key=lambda r:(not route_enabled(r,settings or {}),quality_order(r,criteria)))
     visible=[]
     for c in channels.values():
         group=c['group']
@@ -292,9 +349,10 @@ def build(sources, tests, overrides, route_modes=None, settings=None, profiles=N
         for r in rows:
             if not r['url']:continue
             test=tests.get(r['url'],{})
-            r['test']={k:test[k] for k in ('speed','resolution','at','intermittent','note','quality','method','recent','startup','stalls','stall_seconds','seconds','bitrate','segments','grace','fallback','direct_history','entry_retries','opening','httpStatus','play_seconds') if k in test}
+            r['test']={k:test[k] for k in ('speed','resolution','at','intermittent','note','quality','method','recent','startup','stalls','stall_seconds','seconds','bitrate','segments','grace','fallback','direct_history','entry_retries','opening','httpStatus','play_seconds','evidence','error_category','inconclusive','last_attempt') if k in test}
             r['speed_display']=speed_display(test.get('speed'))
-            r['assessment']=assess(test,settings or {})
+            r.update(result_views(test,settings or {}))
+            r['assessment']=r['current_qualification']['assessment']
             r['mode']=route_mode(r.get('members',[r['name']]),r['url'],route_modes)
             r['enabled']=route_enabled(r,settings or {})
             r['published']=False
@@ -306,7 +364,7 @@ def build(sources, tests, overrides, route_modes=None, settings=None, profiles=N
     return result
 
 def route_enabled(route, settings):
-    return route['mode']=='on' or (route['mode']=='auto' and (not settings.get('strict',True) or route['assessment'] in ('保留','待复测')))
+    return route['mode']=='on' or (route['mode']=='auto' and (not settings.get('strict',True) or route.get('activation_assessment',route['assessment']) in ('保留','待复测')))
 
 def selected(channels, settings):
     for channel in channels:

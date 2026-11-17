@@ -284,10 +284,13 @@ with tempfile.TemporaryDirectory() as temp:
         assert not json.loads(request('/live.json'))
         route(both[1],'/fail','on')
         api('job',dict(action='probe',url=origin+'/fail'));waitjob()
-        assert not line_state('/fail')['enabled'] and line_state('/fail')['mode']=='auto'
+        assert line_state('/fail')['enabled'] and line_state('/fail')['mode']=='on'
         assert not line_state('/master')['enabled'] and line_state('/master')['mode']=='off'
         api('job',dict(action='probe',url=origin+'/master'));waitjob()
         assert line_state('/master')['enabled'] and line_state('/master')['mode']=='auto'
+        route(both[0],'/master','auto')
+        route(both[1],'/fail','auto')
+        assert line_state('/master')['enabled'] and not line_state('/fail')['enabled']
         for path in ('/live.m3u','/live.txt','/live.json'):
             result=request(path)
             assert (origin+'/master').encode() in result and (origin+'/fail').encode() not in result
@@ -363,7 +366,7 @@ fixture=[dict(id=1,name='订阅',priority=1,items=items)]
 matched={c['name']:c for c in build(fixture,{},{},epg_logos={logo_keys(None,'CCTV-5+')[0]:'https://fixture.local/plus.png'})}
 assert matched['CCTV5体育']['logo']=='https://fixture.local/five.png'
 assert matched['CCTV5+体育赛事']['logo']=='https://fixture.local/plus.png'
-# A faster lower-priority subscription should win in speed mode; height wins in resolution mode.
+# Qualification criteria do not change quality-first ranking among passing routes.
 from catalog import selected
 name='CCTV1综合'
 urls=[fixture_url+str(i) for i in range(4)]
@@ -371,7 +374,7 @@ samples={urls[0]:dict(seconds=8,speed=300,resolution=dict(width=1920,height=1080
          urls[1]:dict(seconds=8,speed=1200,resolution=dict(width=1280,height=720)),
          urls[3]:dict(status='清单失败')}
 feeds=[dict(id=i,name=str(i),priority=i,items=[dict(name=name,url=u,attrs={},options=[])]) for i,u in enumerate(urls)]
-for criteria,first in [('speed',1),('resolution',0),('both',0)]:
+for criteria,first in [('speed',0),('resolution',0),('both',0)]:
     settings=dict(criteria=criteria,strict=True,mode='best')
     channels=build(feeds,samples,{},settings=settings)
     order=[urls[first],urls[1-first],urls[2],urls[3]]

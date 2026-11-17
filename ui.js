@@ -1,7 +1,12 @@
 const $=id=>document.getElementById(id);
 const esc=x=>String(x??'').replace(/[<>&"']/g,v=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[v]));
 let state, editing, wasRunning=false, busy=false, noticeTimer;
+// Normalize legacy diagnostic wording at display time; stored records stay unchanged.
+function diagnosticText(value){
+ return String(value??'').replace(/测速/g,'检测').replace(/测试时间/g,'检测时间').replace(/秒后测试/g,'秒后检测').replace(/测试目标/g,'检测目标').replace(/要测试的线路/g,'要检测的线路');
+}
 function notice(text){
+ text=diagnosticText(text);
  const box=$('notice');
  if(box.matches(':popover-open'))box.hidePopover();
  box.setAttribute('popover','manual');box.textContent=text;
@@ -20,15 +25,14 @@ async function api(path,data){
 function safely(fn){return async(...args)=>{try {await fn(...args);}catch(e){notice(e.message);}};}
 function applyHelp(root=document){
  const help=[
-  ['#viewCards','浅绿卡片表示订阅中可见，浅暖灰表示未发布；顶部共享位置，内容分别记忆。'],
-  ['#viewLines','逐条管理线路；顶部位置共享，内容恢复本视图上次的位置。'],
+  ['#viewCards','按频道浏览，点击查看线路和频道设置。'],
+  ['#viewLines','逐条查看检测结果、播放和调整启停。'],
   ['#group','仅显示所选分组；选择全部分组恢复完整目录。'],
   ['#query','按频道名、直播平台或地址筛选。'],
   ['#clearPicks','清空已选项目，保留批量模式。'],
-  ['#probeMode','智能检测先快检，异常线路间隔后复测一次；连续检测观察更久；传统测速只测末片传输。'],
-  ['#defaultHours','仅影响跟随默认设置的订阅；单位小时，填 0 关闭自动更新。'],
-  ['#autoProbe','定时更新成功后，只复测该直播订阅的线路。'],
-  ['#strictMode','开启后按检测条件自动启停线路；每次测速完成会覆盖手动启停。'],
+  ['#defaultHours','单个订阅可在源管理中另设间隔或关闭更新。'],
+  ['#autoProbe','仅在定时更新成功后自动检测。'],
+  ['#strictMode','关闭后，检测只更新结果，不改变启停。超时、限流等未能验证的结果不重置手动选择。'],
   ['#retryPlayer','重新连接当前线路并尝试播放。'],
   ['#logKind','切换要查看的记录类型，清除操作也只作用于该类型。'],
   ['#channelEdit','展开频道改名、分组、台标和节目单设置。'],
@@ -61,7 +65,7 @@ async function reload(live=false){
  appliedRequest=request;state=next;
  cardChannels=new Map(state.channels.map(c=>[c.name,c]));
  $('edition').textContent=state.preview?'预览模式':'本地工作区';
- $('edition').title=state.preview?'独立预览版：定时更新暂未运行，手动更新和测速仍可使用。':'当前运行的是正式工作区，定时更新按设置执行。';
+ $('edition').title=state.preview?'独立预览版：定时更新暂未运行，手动更新和检测仍可使用。':'当前运行的是正式工作区，定时更新按设置执行。';
  if($('dialog').open)updateTitlePreview?.();
  if(!live)guideCache.clear();
  $('stats').innerHTML=[[state.exported,'已发布频道'],[state.lines,'已发布线路'],[state.sources.filter(s=>s.kind==='playlist').length,'直播订阅'],[state.sources.filter(s=>s.kind==='epg').length,'EPG 订阅']].map(([v,k])=>`<div>${k}<strong>${v}</strong></div>`).join('');
@@ -79,7 +83,7 @@ async function reload(live=false){
  const cfg=state.settings,f=$('schedule').elements;
  renderAccess(state.password_mode);
  if(!settingsDirty){
-   f.probe_mode.value=cfg.probe_mode||'adaptive';f.criteria.value=cfg.criteria;f.min_height.value=cfg.min_height;f.min_speed.value=cfg.min_speed;
+   f.probe_mode.value=probeModeChoice(cfg);f.criteria.value=cfg.criteria;f.min_height.value=cfg.min_height;f.min_speed.value=cfg.min_speed;
    f.hours.value=cfg.minutes/60;f.mode.value=cfg.mode;f.strict.checked=cfg.strict;f.auto_probe.checked=cfg.auto_probe;
    updateCriteriaFields();
  }
@@ -125,12 +129,12 @@ function hiddenRoute(r,restore){
  const addressKey=JSON.stringify(restore);
  const sources=r.sources?.join('、')||'未匹配到订阅';
  return `<div class="hidden-row hidden-route"><div>
-   <div class="hidden-heading"><div class="hidden-name"><input type="checkbox" data-hidden-pick="${esc(addressKey)}" aria-label="选择 ${esc(r.label||r.name)} 的线路 ${esc(r.url)}"><b>${esc(r.label||r.name)}</b></div>
+   <div class="hidden-heading"><div class="hidden-name"><input type="checkbox" data-hidden-pick="${esc(addressKey)}" aria-label="选择 ${esc(r.label||r.name)} 的线路${esc(r.url)}"><b>${esc(r.label||r.name)}</b></div>
    <dl class="hidden-metrics"><div><dt>分辨率</dt><dd title="${esc(sizeText(test))}">${resolutionResult(test)}</dd></div>
    <div><dt>速率</dt><dd class="metric">${speedResult(r.name,r)}</dd></div></dl></div>
    <div class="hidden-meta"><small class="hidden-source">来源订阅：${esc(sources)}</small>
    <button type="button" class="address-link hidden-url" data-hidden-address="${esc(r.url)}" aria-label="展开完整地址：${esc(r.url)}" aria-expanded="false" aria-controls="infoPopup">${esc(shortStreamAddress(r.url))}</button></div>
-   </div><button type="button" title="仅恢复这条线路，沿用原有启停和测速规则。" data-restore="${esc(addressKey)}">恢复此线路</button></div>`;
+   </div><button type="button" title="仅恢复这条线路，沿用原有启停和检测规则。" data-restore="${esc(addressKey)}">恢复此线路</button></div>`;
 }
 const restoringOwners=new Set();
 function syncHiddenSelection(group){
@@ -192,7 +196,7 @@ function renderHidden(){
  const picked=new Set([...$('hiddenList').querySelectorAll('[data-hidden-pick]:checked')].map(el=>el.dataset.hiddenPick));
  const expanded=new Set([...$('hiddenList').querySelectorAll('details[open]')].map(el=>el.dataset.owner));
  const items=state.hidden||[];
- const toolbar='<div class="hidden-selection"><label><input type="checkbox" data-hidden-all> 全选</label><output></output><button type="button" data-hidden-clear>清空选择</button><button type="button" class="primary" title="恢复本列表中勾选的线路，沿用原有启停和测速规则。" data-hidden-submit>恢复所选线路</button></div>';
+ const toolbar='<div class="hidden-selection"><label><input type="checkbox" data-hidden-all> 全选</label><output></output><button type="button" data-hidden-clear>清空选择</button><button type="button" class="primary" title="恢复本列表中勾选的线路，沿用原有启停和检测规则。" data-hidden-submit>恢复所选线路</button></div>';
  const standalone=items.filter(item=>item.kind==='route');
  const individual=standalone.length?`<section class="hidden-parent standalone-routes" data-restore-scope data-owner='["route"]'>
    <h3>单独隐藏的线路（${standalone.length}）</h3>${toolbar}
@@ -230,12 +234,21 @@ function routeRows(list){
  return list.flatMap(c=>c.lines.map((r,i)=>({c,r,i})).filter(({r})=>!q||[c.label,c.name,r.url,r.platform].join(' ').toUpperCase().includes(q)));
 }
 const healthNames={pass:'可用',fail:'不可用',unmeasured:'未测',uncertain:'待确认'};
-function healthOf(r){return r.assessment==='保留'?'pass':r.assessment==='未测'?'unmeasured':['待复测','未能验证'].includes(r.assessment)?'uncertain':'fail';}
+function healthOf(r){return r.assessment==='保留'?'pass':r.assessment==='未测'?'unmeasured':['待复测','未能验证','暂时失败'].includes(r.assessment)?'uncertain':'fail';}
+function routeHealthCounts(lines){
+ const counts={pass:0,fail:0,unmeasured:0,uncertain:0};
+ for(const line of lines)counts[healthOf(line)]++;
+ return counts;
+}
+function routeHealthSummary(lines){
+ const counts=routeHealthCounts(lines);
+ return `${lines.length}条线路`+Object.entries(counts).filter(([,n])=>n).map(([key,n])=>` · ${healthNames[key]}${n}`).join('');
+}
 function matchingRows(rows){return healthFilter?rows.filter(({c,r})=>c.group===healthFilter.group&&healthOf(r)===healthFilter.status):rows;}
 function updateProbeAction(){
  const button=$('probe');
- button.title=healthFilter?`只测试「${healthFilter.group}」当前筛出的${healthNames[healthFilter.status]}线路。`:'逐条测试所有启用频道的线路，包括当前搜索或分组之外的线路。';
- button.textContent=healthFilter?'测试筛出线路':'测速全部线路';
+ button.title=healthFilter?`只检测「${healthFilter.group}」当前筛出的${healthNames[healthFilter.status]}线路。`:'检测全部可见线路，含未测和不达标线路；不受搜索或分组筛选限制。';
+ button.textContent=healthFilter?'检测筛出线路':'检测全部线路';
  button.disabled=busy||Boolean(healthFilter&&!matchingRows(routeRows(filtered())).length);
 }
 function visibleKeys(list){
@@ -265,7 +278,7 @@ function selectionStatus(list){
    const action=button.dataset.bulk,target=lineView()?'线路':'频道';
    button.textContent=(action==='hide'?'隐藏':toggleText(action==='on'))+'所选';
    button.title=action==='hide'?`从目录和播放器订阅中隐藏所选${target}，可在隐藏管理中恢复。`:
-     lineView()?`临时${toggleText(action==='on')}所选线路，各线路下次测速完成后恢复自动控制。`:`${toggleText(action==='on')}所选频道内的全部可见线路，下次测速完成后恢复自动控制。`;
+     lineView()?`手动${toggleText(action==='on')}所选线路，开启自动启停后，下次首测明确结果可替代此选择。`:`手动${toggleText(action==='on')}所选频道内的全部可见线路，开启自动启停后，下次首测明确结果可替代此选择。`;
    button.hidden=(action==='on'&&allOn)||(action==='off'&&!anyOn);
    button.disabled=changingBulk;
  }
@@ -316,7 +329,7 @@ function setSwitch(button,on,context='线路'){
 }
 function routeControl(r){
  const action=r.enabled?'off':'on',label=toggleText(action==='on');
- const source=r.mode==='auto'?'测速自动控制':'临时手动控制，下次取得有效测速结果后恢复自动';
+ const source=r.mode==='auto'?'检测自动控制':'手动选择；开启自动启停时，下次首测明确结果可替代此选择';
  const publication=r.publication_reason==='channel_disabled'?'频道已关闭发布，此线路未加入订阅。':r.publication_reason==='not_selected'?'仅发布最优线路，此线路作为备用。':'';
  return {action,label,title:`线路当前已${toggleText(r.enabled)}，点击${label}此线路。${source}。${publication}`};
 }
@@ -324,10 +337,12 @@ function routeToggle(c,r){
    const {action,title}=routeControl(r);
  return `<button type="button" class="state-switch" role="switch" aria-checked="${Boolean(r.enabled)}" aria-label="${esc(c.label)}线路启用状态" data-policy="${action}" data-owner="${esc(c.name)}" data-url="${esc(r.url)}" title="${esc(title)}">已${toggleText(r.enabled)}</button>`;
 }
+function defaultPlayRoute(c){return c.lines.find(r=>r.enabled)||c.lines[0];}
 function playButton(c,r){
- return `<button type="button" class="play-route" data-play="${esc(r.url)}" data-owner="${esc(c.name)}" title="播放此线路" aria-label="播放 ${esc(c.label)} · ${esc(r.platform||'此线路')}" aria-haspopup="dialog" aria-controls="playerDialog"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 4.4c0-.7.7-1.1 1.3-.7l8 5.6a.9.9 0 0 1 0 1.4l-8 5.6c-.6.4-1.3 0-1.3-.7Z"/></svg></button>`;
+ const number=c.lines.indexOf(r)+1,action=r.enabled?'播放':'试播';
+ return `<button type="button" class="play-route" data-play="${esc(r.url)}" data-owner="${esc(c.name)}" title="${action}线路${number} · ${esc(r.platform||'来源未识别')}" aria-label="${action} ${esc(c.label)} · 线路${number}" aria-haspopup="dialog" aria-controls="playerDialog"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 4.4c0-.7.7-1.1 1.3-.7l8 5.6a.9.9 0 0 1 0 1.4l-8 5.6c-.6.4-1.3 0-1.3-.7Z"/></svg></button>`;
 }
-let playerVersion=0,playerSession=null,playerEngine=null,playerRoute=null,hlsLibrary=null,playerRetryTimer=null;
+let playerVersion=0,playerSession=null,playerEngine=null,playerRoute=null,hlsLibrary=null,playerRetryTimer=null,playerReturnFocus=null;
 function loadHls(){
  if(window.Hls)return Promise.resolve(window.Hls);
  if(!hlsLibrary)hlsLibrary=new Promise((resolve,reject)=>{
@@ -354,7 +369,11 @@ async function openPlayer(name,url,attempt=0){
  playerRoute={name,url};
  closePopup();
  $('playerTitle').textContent=c.label;
- $('playerSource').textContent=(r.platform||'来源未识别')+' · '+sourceNames(r);
+ $('playerSource').textContent='线路'+(c.lines.indexOf(r)+1)+' · '+(r.platform||'来源未识别')+' · '+sourceNames(r)+(r.enabled?'':' · 已停用，仅试播');
+ $('playerTitle').title=c.label+' · '+$('playerSource').textContent;
+ $('playerLine').innerHTML=c.lines.map((line,i)=>`<option value="${esc(line.url)}">线路${i+1} · ${esc(line.platform||'来源未识别')} · ${line.enabled?'已启用':'已停用'} · ${esc(line.speed_display||'未测')}</option>`).join('');
+ $('playerLine').value=r.url;
+ $('playerLineControl').hidden=c.lines.length<2;
  $('playerStatus').textContent=attempt?'正在重新连接原始入口（'+attempt+'/2）…':'正在连接此线路…';$('retryPlayer').hidden=true;
  if(!$('playerDialog').open)$('playerDialog').showModal();
  const video=$('previewVideo');
@@ -416,8 +435,16 @@ async function openPlayer(name,url,attempt=0){
  }catch(error){failed(error.message);}
 }
 $('closePlayer').onclick=()=>{releasePlayer();$('playerDialog').close();};
-$('playerDialog').addEventListener('close',releasePlayer);
+$('playerDialog').addEventListener('close',()=>{
+ releasePlayer();
+ // Explicitly restore the trigger, not the surrounding scrollable table (Safari).
+ const original=playerReturnFocus;
+ const target=original?.isConnected?original:[...document.querySelectorAll('button[data-play]')].find(button=>button.dataset.owner===original?.dataset.owner&&button.dataset.play===original?.dataset.play);
+ if(target&&!target.disabled)target.focus({preventScroll:true});
+ playerReturnFocus=null;
+});
 $('playerDialog').addEventListener('cancel',releasePlayer);
+$('playerLine').onchange=()=>{if(playerRoute)openPlayer(playerRoute.name,$('playerLine').value);};
 $('retryPlayer').onclick=()=>{if(playerRoute)openPlayer(playerRoute.name,playerRoute.url);};
 window.addEventListener('pagehide',()=>{
  if(playerSession)fetch('/api/close-play',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session:playerSession}),keepalive:true}).catch(()=>{});
@@ -510,7 +537,7 @@ function testBadge(owner,r,passLabel){
  const status=speedStatus(r.assessment),tone=speedTones.get(status);
  if(status==='未测')return metricText(status,tone);
  const label=status==='通过'?(passLabel||playbackLabel(r.test)||status):status;
- return `<button type="button" class="metric-result ${tone}" title="点击查看测速详情" data-failure="${esc(r.url)}" data-owner="${esc(owner)}" aria-expanded="false" aria-controls="infoPopup">${esc(label)}</button>`;
+ return `<button type="button" class="metric-result ${tone}" title="点击查看检测详情" data-failure="${esc(r.url)}" data-owner="${esc(owner)}" aria-expanded="false" aria-controls="infoPopup">${esc(label)}</button>`;
 }
 function speedResult(owner,r){
  return testBadge(owner,r,r.test.speed==null?'速率未知':r.speed_display);
@@ -523,16 +550,21 @@ function routeTableHead(group=''){
 function routeTable(rows,head){
  const body=rows.map(({c,r,i})=>{
    const key=routeKey(c.name,r.url);
-   return `<tr data-selection-key="${esc(key)}" aria-label="${esc(c.label)} 线路 ${i+1}" class="${picked.has(key)?'marked':''}">
+   return `<tr data-selection-key="${esc(key)}" aria-label="${esc(c.label)} 线路${i+1}" class="${picked.has(key)?'marked':''}">
    <td><span class="group-tag">${esc(c.group)}</span></td><td><button class="channel-link" data-channel="${esc(c.name)}">${esc(c.label)}</button><small class="secondary route-platform" title="${esc(r.platform_host?'识别域名：'+r.platform_host:'地址尚未提供可确认平台的域名')}">${esc(r.platform||'来源未识别')}</small></td>
    <td class="logo-cell">${logoCell(c)}</td><td>${addressLink(c,r,i)}<small class="source-name">来源订阅：${esc(sourceNames(r))}</small></td><td>${guideButton(c,'查看节目单')}</td>
    <td class="metric" title="${esc(sizeText(r.test))}">${resolutionResult(r.test)}</td>
-   <td class="metric" data-probe-cell="${esc(r.url)}"><span class="last-probe">${speedResult(c.name,r)}</span><span class="live-probe metric-result"></span></td><td class="control-cell"><div class="policies">${routeToggle(c,r)}<button type="button" data-test="${esc(r.url)}" ${busy?'disabled':''}>测试</button>${hideButton('route',c.name,r.url)}${playButton(c,r)}</div></td></tr>`;
+   <td class="metric" data-probe-cell="${esc(r.url)}"><span class="last-probe">${speedResult(c.name,r)}</span><span class="live-probe metric-result"></span></td><td class="control-cell"><div class="policies">${routeToggle(c,r)}<button type="button" data-test="${esc(r.url)}" ${busy?'disabled':''}>检测</button>${hideButton('route',c.name,r.url)}${playButton(c,r)}</div></td></tr>`;
  }).join('');
  return `<div class="table-scroll" role="region" aria-label="频道线路表" tabindex="0"><table>${head}<tbody>${body}</tbody></table></div>`;
 }
+function cardDetection(c){
+ const preferred=defaultPlayRoute(c);
+ const available=preferred?.enabled&&healthOf(preferred)==='pass'&&Number.isFinite(preferred.test?.speed);
+ return `<div class="card-line-metric"><small>首选速率</small>${available?speedResult(c.name,preferred):metricText('暂无可用','unmeasured')}</div>`;
+}
 function channelCard(c){
- const preferred=c.lines.find(r=>r.enabled&&r.assessment==='保留'&&r.test.speed!=null);
+ const preferred=defaultPlayRoute(c);
  const published=c.published??Boolean(c.enabled&&c.lines.some(r=>r.published??r.enabled));
  const publicationHint=published?'已加入播放器订阅。':!c.enabled?'没有启用的线路，播放器订阅中不可见。':'没有启用的线路，播放器订阅中不可见。';
  const logo=usableLogo(c);
@@ -540,9 +572,9 @@ function channelCard(c){
  return `<article data-card-name="${esc(c.name)}" data-selection-key="${esc(c.name)}" data-publication="${published?'published':'unpublished'}" aria-label="${esc(c.label)}" aria-description="${esc(publicationHint)}" title="${esc(publicationHint)}" class="channel-card ${picked.has(c.name)?'marked':''}">
  <div class="card-name">
  <span class="station-mark" aria-hidden="true"><span>${initials}</span>${logo?`<img data-channel-logo="${esc(c.name)}" src="${esc(logo)}" loading="lazy" referrerpolicy="no-referrer" alt="">`:''}</span>
- <div class="card-identity"><button type="button" data-channel="${esc(c.name)}" title="点击查看详情：【${esc(c.label)}】">${esc(c.label)}</button><div class="card-caption" aria-label="线路启停状态">${c.lines.map((r,i)=>{const label='线路 '+(i+1)+' · '+(r.platform||'来源未识别')+' · '+(r.enabled?'已启用':'未启用');return `<span class="route-state-dot" data-enabled="${Boolean(r.enabled)}" role="img" aria-label="${esc(label)}" title="${esc(label)}"></span>`;}).join('')}</div></div>
+ <div class="card-identity"><button type="button" data-channel="${esc(c.name)}" title="点击查看详情：【${esc(c.label)}】">${esc(c.label)}</button><div class="card-caption" aria-label="线路启停状态">${c.lines.map((r,i)=>{const label='线路'+(i+1)+' · '+(r.platform||'来源未识别')+' · '+(r.enabled?'已启用':'已停用');return `<span class="route-state-dot" data-enabled="${Boolean(r.enabled)}" role="img" aria-label="${esc(label)}" title="${esc(label)}"></span>`;}).join('')}</div></div>
  ${hideButton('channel',c.name,'',true)}
- </div><div class="card-data"><div class="card-quality"><small>首选速率</small>${preferred?speedResult(c.name,preferred):metricText('暂无可用测速','unmeasured')}</div>${c.lines.length?playButton(c,c.lines.find(r=>r.enabled)||c.lines[0]):''}</div></article>`;
+ </div><div class="card-data"><div class="card-quality">${cardDetection(c)}</div>${c.lines.length?playButton(c,preferred):''}</div></article>`;
 }
 const workspaceBar=document.querySelector('.workspace-bar');
 const catalogTools=$('catalogTools'),directoryHeader=document.createElement('div'),headerBody=document.createElement('div');
@@ -644,7 +676,7 @@ function render(live=false){
    const counts={pass:0,fail:0,unmeasured:0,uncertain:0};
    for(const {r} of groupRows)counts[healthOf(r)]++;
    const buttons=Object.entries(counts).filter(([key,n])=>key!=='uncertain'||n||healthFilter?.status===key).map(([key,n])=>`<button type="button" data-health="${key}" data-group="${esc(group)}" aria-pressed="${healthFilter?.group===group&&healthFilter.status===key}">${healthNames[key]} ${n}</button>`).join('');
-   const statusInfo=lineView()?`<span class="group-health" title="按测速结果筛选，再次点击取消"><small class="group-status-label">测速结果</small>${buttons}</span>`:'<span class="route-state-legend" aria-label="线路状态说明" title="每个色点代表一条线路，点开频道详情可调整启停状态"><span class="group-status-label">线路状态</span><span class="legend-item"><i class="route-state-dot" data-enabled="true" aria-hidden="true"></i>已启用</span><span class="legend-item"><i class="route-state-dot" data-enabled="false" aria-hidden="true"></i>未启用</span></span>';
+   const statusInfo=lineView()?`<span class="group-health" title="按检测结果筛选，再次点击取消"><small class="group-status-label">检测结果</small>${buttons}</span>`:'<span class="route-state-legend" aria-label="线路状态说明" title="每个色点代表一条线路，点开频道详情可调整启停状态"><span class="group-status-label">线路状态</span><span class="legend-item"><i class="route-state-dot" data-enabled="true" aria-hidden="true"></i>已启用</span><span class="legend-item"><i class="route-state-dot" data-enabled="false" aria-hidden="true"></i>已停用</span></span>';
    return `<div class="catalog-group" data-group="${esc(group)}"><div class="sticky-group"><div class="group-head"><div class="group-identity"><button class="group-title" data-fold="${esc(group)}" aria-expanded="${!folded}"><span class="caret">${folded?'▸':'▾'}</span>${esc(group)}</button><small>${channels.length} 个频道 · ${groupRows.length} 条线路</small></div><div class="group-actions"><button class="group-focus" data-focus="${esc(group)}">${$('group').value===group?'显示全部分组':'只看此组'}</button>${hideButton('group',group)}</div>${statusInfo}</div>
    ${head&&!folded&&shown.length?`<div class="route-column-head" role="group" aria-label="${esc(group)}线路列表表头"><table>${routeTableHead(group)}</table></div>`:''}</div>
    ${folded?'':!shown.length?'<p class="empty">当前分组没有符合该状态的线路。</p>':lineView()?routeTable(shown,head):`<div class="card-grid">${shownChannels.map(channelCard).join('')}</div>`}</div>`;
@@ -727,7 +759,7 @@ async function showPopup(button){
    if(reason==='分辨率未知')reason+=`：未能识别尺寸，要求高度至少 ${cfg.min_height} 像素`;
    const result=metricText(reason,speedTones.get(speedStatus(r.assessment)));
    const details=[t.speed!=null?r.speed_display:'',playbackLabel(t),t.fallback?'已降档':'',t.httpStatus?'HTTP '+t.httpStatus:''].filter(Boolean);
-   body.innerHTML=`${result}${details.length?`<p>${esc(details.join(' · '))}</p>`:''}${notes.length?`<p>${esc(notes.join('；'))}</p>`:''}<small>测试时间</small><p>${esc(t.at||'未知')}</p><small>线路地址</small><code>${esc(r.url)}</code>`;
+   body.innerHTML=`${result}${details.length?`<p>${esc(details.join(' · '))}</p>`:''}${notes.length?`<p>${esc(diagnosticText(notes.join('；')))}</p>`:''}<small>检测时间</small><p>${esc(t.at||'未知')}</p><small>线路地址</small><code>${esc(r.url)}</code>`;
  }else if(address){
    const line=c.lines.find(r=>r.url===address);
    if(!line){closePopup();return;}
@@ -762,7 +794,7 @@ function sourceToggle(s){
  button.type='button';button.dataset.sourceToggle=s.id;
  setSwitch(button,Boolean(s.enabled),'订阅 '+s.name);
  button.disabled=busy||changingSources.has(s.id);
- button.title='订阅当前已'+toggleText(Boolean(s.enabled))+'，点击'+toggleText(!s.enabled)+'，立即生效。停用后暂停更新，并从发布内容中排除此订阅。';
+ button.title='点击'+toggleText(!s.enabled)+'订阅，立即生效。停用后不再更新或发布其内容。';
  return button.outerHTML;
 }
 function renderFeeds(){
@@ -791,7 +823,7 @@ function editSource(id){
  <section class="source-section"><h3>订阅信息</h3><div class="source-form-grid">
  <label>订阅名称<input name="name" required placeholder="例如：家庭直播源" value="${esc(s.name||'')}"></label>
  <label>内容类型<select name="kind"><option value="playlist">直播 · M3U / TXT</option><option value="epg" ${s.kind==='epg'?'selected':''}>节目单 · XMLTV / GZIP</option></select></label>
- <label class="source-wide">订阅地址<input name="url" type="url" required placeholder="https://example.com/channels.m3u" value="${esc(s.url||'')}" spellcheck="false" autocomplete="off"><small>填写可直接获取直播清单或节目单的完整地址。</small></label>
+ <label class="source-wide">订阅地址<input name="url" type="url" required placeholder="https://example.com/channels.m3u" value="${esc(s.url||'')}" spellcheck="false" autocomplete="off"><small>填写直播清单或节目单的完整下载地址。</small></label>
  </div></section>
  <section class="source-section"><h3>更新与优先级</h3><div class="source-form-grid">
  <label>自动更新<select name="frequency"><option value="inherit">跟随默认设置</option><option value="custom">按指定间隔更新</option><option value="off">关闭自动更新</option></select><small id="sourcePlanHint"></small></label>
@@ -807,7 +839,7 @@ function editSource(id){
  $('cancelSource').onclick=()=>$('dialog').close();
  const f=$('editor').elements;
  f.kind.onchange=()=>{$('fields').querySelector('.source-intro .source-icon').outerHTML=sourceIcon(f.kind.value);};
- f.priority.title='多个订阅提供同一频道时，数字较小的订阅优先提供频道资料。';
+ f.priority.title='同频道资料冲突时，优先使用数值较小的订阅。';
  f.frequency.value=mode;
  function showHours(){
    f.hours.disabled=f.frequency.value!=='custom';$('sourceHours').hidden=f.hours.disabled;
@@ -852,7 +884,7 @@ function editOptions(pairs,selected,defaultLabel){
 }
 function editChannel(key){
  const c=state.channels.find(x=>x.name===key), r=state.rules[key]||{};
- const routes=c.lines.map((line,i)=>`<div class="route"><div class="route-heading"><b>线路 ${i+1} · ${esc(line.from.join(' / '))}</b><span data-result-badge>${testBadge(c.name,line)}</span></div><p class="url">${addressLink(c,line,i)}<small class="source-name">${esc(detailSource(line))}</small></p><small data-probe-cell="${esc(line.url)}"><span class="last-probe">${detailMetrics(line)}</span><span class="live-probe metric-result"></span></small><div class="route-controls">${routeToggle(c,line)}<button type="button" data-test="${esc(line.url)}" ${busy?'disabled':''}>测此线路</button>${hideButton('route',key,line.url)}${playButton(c,line)}</div></div>`).join('');
+ const routes=c.lines.map((line,i)=>`<div class="route"><div class="route-heading"><b>线路${i+1} · ${esc(line.from.join(' / '))}</b><span data-result-badge>${testBadge(c.name,line)}</span></div><p class="url">${addressLink(c,line,i)}<small class="source-name">${esc(detailSource(line))}</small></p><small data-probe-cell="${esc(line.url)}"><span class="last-probe">${detailMetrics(line)}</span><span class="live-probe metric-result"></span></small><div class="route-controls">${routeToggle(c,line)}<button type="button" data-test="${esc(line.url)}" ${busy?'disabled':''}>检测此线路</button>${hideButton('route',key,line.url)}${playButton(c,line)}</div></div>`).join('');
  const groups=[...new Set([...directoryGroups(),...Object.keys(state.hidden_groups||{})])].map(g=>[g,g]);
  const members=c.members.filter(m=>m!==key);
  const targets=state.channels.filter(ch=>ch.name!==key).map(ch=>[ch.name,ch.label===ch.name?ch.label:`${ch.label}（${ch.name}）`]);
@@ -861,7 +893,7 @@ function editChannel(key){
    <section class="edit-block"><h3>频道资料</h3><div class="settings-grid">
    <label>频道名称<input name="label" value="${esc(r.label)}" placeholder="${esc(key)}"><small>留空使用原名「${esc(key)}」。</small></label>
    <label>所属分组<select name="group">${editOptions(groups,r.group,'自动分组（'+c.auto_group+'）')}</select><small>选择后，频道和它的线路一起移入该组。</small></label></div></section>
-   <section class="edit-block"><h3>频道台标 <span id="logoMode"></span></h3><div class="edit-logo-row"><div id="editLogoPreview"></div><div><div class="route-controls"><button type="button" id="chooseLogo">上传台标</button><button type="button" id="removeLogo" hidden>移除台标</button></div><small>PNG、JPEG 或 WebP，最大 2 MB。上传立即生效；未上传或移除后自动匹配。</small></div></div><input type="file" id="logoFile" accept="image/png,image/jpeg,image/webp" hidden><small id="logoFeedback" role="status"></small></section>
+   <section class="edit-block"><h3>频道台标 <span id="logoMode"></span></h3><div class="edit-logo-row"><div id="editLogoPreview"></div><div><div class="route-controls"><button type="button" id="chooseLogo">上传台标</button><button type="button" id="removeLogo" hidden>移除台标</button></div><small>PNG / JPEG / WebP，最大 2 MB。上传立即生效；移除后自动匹配。</small></div></div><input type="file" id="logoFile" accept="image/png,image/jpeg,image/webp" hidden><small id="logoFeedback" role="status"></small></section>
    <section class="edit-block"><h3>节目单与线路</h3><div class="settings-grid">
    <label>节目单对应频道<select name="epg">${editOptions([],r.epg,autoGuide)}</select><small id="epgHint">从已获取的节目单中选择。</small></label>
    <label>将线路合并到<select name="target" ${members.length?'disabled':''}>${editOptions(targets,r.target,'保持独立频道')}</select><small>${members.length?'先拆出下列成员，才能合并到其他频道。':'保存后，本频道的线路会出现在所选频道下。'}</small></label></div>
@@ -869,7 +901,7 @@ function editChannel(key){
 
    <div class="detail-edit-actions"><button type="button" id="discardEdit">取消</button><button type="submit" class="primary">保存设置</button></div></fieldset>`;
  const overview=`<details class="detail-guide" open><summary>节目单</summary><div id="detailGuide" aria-live="polite">正在读取节目单…</div></details>
-   <p id="detailPublication" class="detail-publication">${esc(publicationSummary(c))}</p><section class="detail-routes" data-detail-owner="${esc(key)}"><h3>线路状态 <small>${c.lines.length} 条</small></h3>${routes}</section>`;
+   <p id="detailPublication" class="detail-publication">${esc(publicationSummary(c))}</p><p id="detailDetection" class="detail-detection">${esc(routeHealthSummary(c.lines))}</p><section class="detail-routes" data-detail-owner="${esc(key)}"><h3>线路状态 <small>${c.lines.length} 条</small></h3>${routes}</section>`;
  show(c.label,settings+overview,async f=>{
    const values=Object.fromEntries(new FormData(f));
    values.epg=f.elements.epg.value;
@@ -887,7 +919,7 @@ function editChannel(key){
    try{
      const entries=await api('guide-options');
      guideSelect.innerHTML=editOptions(entries.map(([id,name])=>[id,name===id?name:`${name}（${id}）`]),r.epg,autoGuide);
-     guideHint.textContent=entries.length?'选择电视指南中对应的频道，或保留自动匹配。':'暂无节目单频道。更新订阅后可在这里选择。';
+     guideHint.textContent=entries.length?'选择对应频道；选「自动匹配」由系统识别。':'暂无节目单频道。更新订阅后可在这里选择。';
      guidesLoaded=true;
    }catch{guideHint.textContent='节目单列表读取失败，请重新打开编辑重试。';}
    finally{guideSelect.disabled=false;}
@@ -938,7 +970,7 @@ function detailMetrics(r){
  if(r.test.stalls!=null)metrics.push(`播放观察 ${r.test.play_seconds??r.test.seconds} 秒 · ${r.test.segments} 片 · 预计卡顿 ${r.test.stalls} 次（${r.test.stall_seconds} 秒）`);
  if(r.test.bitrate)metrics.push(`${r.test.fallback?'已降档 · ':''}所测档位 ${(r.test.bitrate/1e6).toFixed(2)} Mbps`);
  if(r.test.at)metrics.push(esc(new Date(r.test.at).toLocaleString()));
- metrics.push(...(r.test.note||[]).map(esc));
+ metrics.push(...(r.test.note||[]).map(note=>esc(diagnosticText(note))));
  return metrics.join('　');
 }
 function publicationSummary(c){
@@ -954,6 +986,7 @@ function refreshDetailResults(){
  const c=cardChannels.get(list.dataset.detailOwner);
  if(!c)return;
  $('detailPublication').textContent=publicationSummary(c);
+ $('detailDetection').textContent=routeHealthSummary(c.lines);
 
  list.querySelector('h3 small').textContent=c.lines.length+' 条';
  let previous=list.querySelector('h3');
@@ -964,7 +997,7 @@ function refreshDetailResults(){
    previous=box;
    box.querySelector('[data-address]').dataset.number=index+1;
    box.querySelector('.source-name').textContent=detailSource(r);
-   box.querySelector('.route-heading b').textContent=`线路 ${index+1} · ${r.from.join(' / ')}`;
+   box.querySelector('.route-heading b').textContent=`线路${index+1} · ${r.from.join(' / ')}`;
    const badge=box.querySelector('[data-result-badge]');
    if(!badge.contains(popupAnchor))badge.innerHTML=testBadge(c.name,r);
    box.querySelector('.last-probe').innerHTML=detailMetrics(r);
@@ -974,30 +1007,30 @@ function refreshDetailResults(){
 function paintProgress(){
  const url=liveJob?.active_url;
  const channels=url?(state?.channels||[]).filter(c=>c.lines.some(r=>r.url===url)):[];
- const links=channels.map(c=>`<button type="button" class="task-channel" data-locate="${esc(c.name)}" title="定位到测速中的${lineView()?'线路':'频道卡片'}">${esc(c.label)}</button>`).join(' / ');
+ const links=channels.map(c=>`<button type="button" class="task-channel" data-locate="${esc(c.name)}" title="定位到检测中的${lineView()?'线路':'频道卡片'}">${esc(c.label)}</button>`).join(' / ');
  const names=$('taskChannels');
  if(names.dataset.markup!==links){
    names.innerHTML=links;
    names.dataset.markup=links;
  }
  const route=channels.length===1?' · 线路 '+(channels[0].lines.findIndex(r=>r.url===url)+1):'';
- const sample=liveJob?.sample?(liveJob.sample_seconds?`${liveJob.sample_seconds} 秒 · `:'')+liveJob.sample:'正在连接线路';
+ const sample=liveJob?.sample?(liveJob.sample_seconds?`${liveJob.sample_seconds} 秒 · `:'')+diagnosticText(liveJob.sample):'正在连接线路';
  if(liveJob){
-   $('taskMessage').textContent=url?'正在测 '+(channels.length?'':liveJob.active_channel||'当前线路'):
-     (liveJob.running?'进行中　':'任务　')+liveJob.message+(liveJob.running&&liveJob.total?'　'+liveJob.done+'/'+liveJob.total:'');
+   $('taskMessage').textContent=url?'正在检测 '+(channels.length?'':liveJob.active_channel||'当前线路'):
+     (liveJob.running?'进行中　':'任务　')+diagnosticText(liveJob.message)+(liveJob.running&&liveJob.total?'　'+liveJob.done+'/'+liveJob.total:'');
    $('taskProgress').textContent=url?`${route} · 整批第 ${liveJob.done+1}/${liveJob.total} 条 · ${sample}`:'';
  }
  for(const card of document.querySelectorAll('[data-card-name]')){
    const active=Boolean(url&&cardChannels.get(card.dataset.cardName)?.lines.some(r=>r.url===url));
    card.classList.toggle('testing',active);
-   if(active)card.setAttribute('aria-label',card.dataset.cardName+'，正在测速');
+   if(active)card.setAttribute('aria-label',card.dataset.cardName+'，正在检测');
    else card.setAttribute('aria-label',cardChannels.get(card.dataset.cardName)?.label||card.dataset.cardName);
  }
  for(const btn of document.querySelectorAll('[data-test]')){
    const active=Boolean(url&&url===btn.dataset.test);
    btn.disabled=active?(!liveJob.run_id||liveJob.stop_line):busy;
-   btn.textContent=active?(liveJob.run_id?'跳过此线路':'测速中'):btn.closest('#dialog')?'测此线路':'测试';
-   btn.title=active?document.querySelector('.task-actions [data-stop-current]').title:'只测试这条直播地址，按当前通过条件更新结果。';
+   btn.textContent=active?(liveJob.run_id?'跳过此线路':'检测中'):btn.closest('#dialog')?'检测此线路':'检测';
+   btn.title=active?document.querySelector('.task-actions [data-stop-current]').title:'只检测这条直播地址，按当前通过条件更新结果。';
    btn.classList.toggle('cancel-test',active);
    if(active&&liveJob.run_id){btn.dataset.stopCurrent='';}else{delete btn.dataset.stopCurrent;}
  }
@@ -1015,7 +1048,7 @@ function paintProgress(){
  for(const el of document.querySelectorAll('[data-probe-cell]')){
    const active=el.dataset.probeCell===liveJob?.active_url;
    el.classList.toggle('measuring',active);
-   if(active)el.querySelector('.live-probe').textContent=liveJob.sample?'测速中 · '+liveJob.sample:'测速中…';
+   if(active)el.querySelector('.live-probe').textContent=liveJob.sample?'检测中 · '+diagnosticText(liveJob.sample):'检测中…';
  }
 }
 function locateProbe(name){
@@ -1082,7 +1115,7 @@ document.addEventListener('click',safely(async e=>{
    return;
  }
  const play=e.target.closest('button[data-play]');
- if(play){await openPlayer(play.dataset.owner,play.dataset.play);return;}
+ if(play){playerReturnFocus=play;await openPlayer(play.dataset.owner,play.dataset.play);return;}
  if(d.locate){locateProbe(d.locate);return;}
  if(e.target.id==='resetSearch'){$('query').value='';$('group').value='';drill='';setHealth(null);return;}
  const tab=e.target.closest('button[data-tab]');
@@ -1111,7 +1144,7 @@ document.addEventListener('click',safely(async e=>{
        else await api('routes',{targets,mode});
      }else if(mode==='hide')await api('hide-channels',{names:keys});
      else await api('channels',{names:keys,enabled:mode==='on',routes_mode:mode});
-     await reload();notice('已'+(mode==='hide'?'隐藏':toggleText(mode==='on'))+' '+keys.length+(routes?' 条线路':mode==='hide'?' 个频道':' 个频道内的全部可见线路')+(mode!=='hide'&&state.settings.strict?'，各线路下次取得有效测速结果后自动判定':''));
+     await reload();notice('已'+(mode==='hide'?'隐藏':toggleText(mode==='on'))+' '+keys.length+(routes?' 条线路':mode==='hide'?' 个频道':' 个频道内的全部可见线路')+(mode!=='hide'?'，已保留手动启停':''));
    }finally{changingBulk=false;selectionStatus(filtered());}
  }
  if(d.hide||d.restore){
@@ -1125,13 +1158,13 @@ document.addEventListener('click',safely(async e=>{
  }
  if(d.policy){
    const btn=e.target,mode=d.policy,previous=btn.getAttribute('aria-checked')==='true';
-   btn.disabled=true;setSwitch(btn,mode==='on');
+   btn.disabled=true;if(mode!=='auto')setSwitch(btn,mode==='on');
    let saved=false;
    try {
      await api('route',{name:d.owner,url:d.url,mode});saved=true;await reload();
-     notice('线路已手动'+toggleText(mode==='on')+(state.settings.strict?'，下次取得有效测速结果后自动判定':''));
+     notice(mode==='auto'?'线路已恢复自动控制':'线路已手动'+toggleText(mode==='on')+'，下次有效首测按结果更新启停，异常复测保持');
    }catch(error){
-     if(!saved)setSwitch(btn,previous);
+     if(!saved&&mode!=='auto')setSwitch(btn,previous);
      throw error;
    }finally{btn.disabled=false;}
  }
@@ -1150,7 +1183,7 @@ document.addEventListener('click',safely(async e=>{
  if(d.feed)editSource(+d.feed);
  if('stopCurrent' in d || 'stopAll' in d){
    const all='stopAll' in d;
-   if(all&&!confirm('终止整批测速？已完成的结果会保留，剩余线路将不再测试。'))return;
+   if(all&&!confirm('终止整批检测？已完成的结果会保留，剩余线路将不再检测。'))return;
    await api('stop-probe',{run_id:d.run,...(all?{}:{url:d.url})});
    await status();return;
  }
@@ -1198,8 +1231,8 @@ $('sync').onclick=safely(()=>launch('refresh'));
 $('probe').onclick=safely(()=>{
  if(healthFilter){
    const urls=matchingRows(routeRows(filtered())).map(({r})=>r.url);
-   if(urls.length&&confirm(`仅测试「${healthFilter.group}」当前筛出的 ${urls.length} 条${healthNames[healthFilter.status]}线路？`))return launch('probe',undefined,urls);
- }else if(confirm('按当前检测方式逐条测试启用频道下的全部线路。开始？'))return launch('probe');
+   if(urls.length&&confirm(`仅检测「${healthFilter.group}」当前筛出的 ${urls.length} 条${healthNames[healthFilter.status]}线路？`))return launch('probe',undefined,urls);
+ }else if(confirm('检测已启用订阅中的全部未隐藏线路，包括未测和不达标线路；有效首测按检测结果更新启停。开始？'))return launch('probe');
 });
 $('probePicked').onclick=safely(()=>{const keys=actionKeys();if(lineView()&&keys.length)return launch('probe',undefined,keys.map(key=>JSON.parse(key)[1]));});
 let latestLogVersion=null,logVersion=null,logRequest=0,legacyLogs=null,clearingLogs=false;
@@ -1212,9 +1245,9 @@ async function loadLogs(version){
  $('logs').innerHTML=rows.map(row=>{
    const time=esc(new Date(row.ts*1000).toLocaleString());
    const failed=['失败','部分失败','未通过','暂时失败','未能验证','待复测'].includes(row.result);
-   const reason=failed?`<details data-id="${row.id}" ${open.has(String(row.id))?'open':''}><summary>查看失败原因</summary><p>${esc(row.reason||row.message)}</p></details>`:'';
+   const reason=failed?`<details data-id="${row.id}" ${open.has(String(row.id))?'open':''}><summary>查看失败原因</summary><p>${esc(diagnosticText(row.reason||row.message))}</p></details>`:'';
    return `<article class="log-entry"><header><b>${esc(row.source||'历史任务')}${row.channel?' · '+esc(row.channel):''}</b><time>${time}</time></header>
-    <div>${speedTones.has(row.result)?metricText(row.result,speedTones.get(row.result)):`<strong class="${failed?'bad':['已跳过','已终止'].includes(row.result)?'':'good'}">${esc(row.result)}</strong>`} ${esc(row.message)}</div>
+    <div>${speedTones.has(row.result)?metricText(row.result,speedTones.get(row.result)):`<strong class="${failed?'bad':['已跳过','已终止'].includes(row.result)?'':'good'}">${esc(diagnosticText(row.result))}</strong>`} ${esc(diagnosticText(row.message))}</div>
     ${row.url?`<small class="url">${esc(row.url)}</small>`:''}${reason}</article>`;
  }).join('')||'<p>暂无此类记录</p>';
  logVersion=version;
@@ -1259,8 +1292,33 @@ $('editor').onsubmit=safely(async e=>{e.preventDefault();
  }
  notice('已保存');});
 let settingsDirty=false;
+function probeModeChoice(cfg){
+ return cfg.probe_mode==='pipeline'?'pipeline_dual':cfg.probe_mode==='continuous'?'continuous':'adaptive';
+}
+const OPTION_HELP={
+ probe_mode:{
+  adaptive:'效率优先：先快检，异常或曾不稳定的线路再连续检测；持续稳定性观察较少。',
+  pipeline_dual:'兼顾效率与验证：粗筛后精测，最多并行两条；同网关串行，不达标线路单独复核。',
+  continuous:'质量优先：每条线路直接连续检测，验证解码、直播推进与卡顿，通常耗时更长。'
+ },
+ criteria:{
+  speed:'速率须高于下方门槛，不限制画面高度。',
+  resolution:'画面高度须达到下方门槛，不限制速率。',
+  both:'速率须高于门槛，画面高度须达到门槛；两项缺一不可。'
+ },
+ mode:{merge:'发布该频道所有已启用线路。',best:'仅发布排序第一的已启用线路，优先达标、稳定、高清与高速。'}
+};
 function updateCriteriaFields(){
  const f=$('schedule').elements;
+ for(const [field,id] of [['probe_mode','probeModeHint'],['criteria','probeCriteriaHint'],['mode','publishModeHint']]){
+   const select=f[field];
+   $(id).textContent=OPTION_HELP[field][select.value]||'';
+   if(field==='probe_mode'&&state&&select.value===probeModeChoice(state.settings)){
+     if(state.settings.probe_mode==='legacy')$(id).textContent+=' 保存后替换旧末片检测。';
+     if(state.settings.probe_mode==='pipeline'&&state.settings.probe_workers!==2)$(id).textContent+=' 保存后启用双线路调度。';
+   }
+   for(const option of select.options)option.title=OPTION_HELP[field][option.value]||'';
+ }
  for(const [row,input,unused] of [[$('speedRule'),f.min_speed,f.criteria.value==='resolution'],[$('heightRule'),f.min_height,f.criteria.value==='speed']]){
    if(unused&&!input.validity.valid)input.value=state.settings[input.name];
    row.hidden=unused;

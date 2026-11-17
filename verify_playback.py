@@ -18,7 +18,7 @@ def verify_deferred_607():
     import service
     url='http://fixture.invalid/entry'
     failed={'method':'continuous','quality':'未能验证','httpStatus':607,'note':['HTTP 607']}
-    good={'method':'continuous','quality':'流畅','opening':'直连可播','advanced':True,'speed':900,'seconds':24,'note':[]}
+    good={'method':'continuous','quality':'流畅','opening':'直连可播','advanced':True,'resolution':{'height':720},'speed':900,'seconds':24,'note':[]}
     with tempfile.TemporaryDirectory() as folder,patch.object(service,'DATA',Path(folder)):
         service.init()
         with service.db() as c:
@@ -34,7 +34,8 @@ def verify_deferred_607():
             assert probe.call_count==2 and service.job['done']==service.job['total']==2,service.job
             with service.db() as c:line=service.catalog(c)[0]['lines'][0]
             assert line['assessment']==('保留' if last is good else '未能验证') and not line['test'].get('grace')
-            assert line['test']['direct_history']==[0]
+            if last is good:assert line['test']['direct_history']==[0]
+            else:assert line['test']['last_attempt']['error_category']=='network_restricted'
             if last is good: assert line['test']['opening']=='复测后可播'
         with patch.object(service,'probe',side_effect=lambda *_:good.copy()):
             for _ in range(5):service.run('probe',[url])
@@ -55,6 +56,8 @@ def verify_job_entry(media_base,entry_times):
         with service.db() as c:
             c.execute('delete from sources')
             c.execute('delete from tests')
+            # The generated fixture is 180p; explicitly select its qualification height.
+            cfg=service.config(c);cfg.update(criteria='both',min_height=180);service.save_config(c,cfg)
             c.execute("insert into sources(name,kind,enabled,priority,items) values('模拟订阅','playlist',1,1,?)",(json.dumps(items),))
         api=ThreadingHTTPServer(('127.0.0.1',0),JobHandler)
         threading.Thread(target=api.serve_forever,daemon=True).start()
@@ -187,6 +190,8 @@ def main():
         assert refused403['quality']=='未能验证' and refused403['httpStatus']==403 and entries['/refused403']==2,refused403
         assert refused403.get('speed') is None and not refused403.get('resolution'),refused403
         assert entry403['httpStatus']==403 and entries['/entry403']==1 and not entry403.get('retryable'),entry403
+        assert all(good['evidence'][key]['state']=='passed' for key in ('entry','manifest','media','decode','live')),good
+        assert good['evidence']['decode']['frames']>=3 and good['evidence']['decode']['pts_advanced'],good
         assert good['quality']=='流畅' and good['advanced'] and good['bitrate']==500000,good
         assert good['resolution']['height']==180 and good['startup']>0 and good['segments']>=3,good
         assert stale['quality']=='暂时失败' and '停更' in str(stale),stale

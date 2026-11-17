@@ -1,3 +1,4 @@
+import {acquireGateway,reportGatewayLimit} from './gateway-lease.mjs';
 // One cookie jar per probe process, shared by manifests, redirects and media.
 const cookies=new Map();
 const matches=(host,domain)=>host===domain||host.endsWith('.'+domain);
@@ -37,8 +38,10 @@ export async function mediaFetch(address,options={}){
      if(host&&path&&(!cookie.secure||url.protocol==='https:'))selected.push(cookie);
    }
    if(selected.length)headers.set('Cookie',selected.sort((a,b)=>b.path.length-a.path.length).map(c=>c.name+'='+c.value).join('; '));
+   acquireGateway(url);
    const response=await fetch(url,{...options,headers,redirect:'manual'});
    storeCookies(response,url);
+   reportGatewayLimit(response,url);
    if(![301,302,303,307,308].includes(response.status)||!response.headers.has('location'))return response;
    await response.body?.cancel();
    url=new URL(response.headers.get('location'),url);

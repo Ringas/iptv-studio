@@ -604,3 +604,29 @@ body{background:var(--canvas)}
 #notice.notice-leaving:not(:empty){opacity:0;scale:.98;animation:none}
 @media(prefers-reduced-motion:reduce){#notice:not(:empty){transition:none}}
 @media(max-width:560px){#hiddenDialog>.bar{padding:16px}#hiddenDialog>p{padding:12px 16px}#hiddenList{padding:0 12px 12px}#hiddenList .hidden-parent{padding:12px}#hiddenList .hidden-heading{align-items:flex-start}#hiddenList .hidden-metrics{gap:12px}}
+
+.player-line-control{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;font-size:13px}.player-line-control select{flex:1;min-width:180px;max-width:100%}.player-line-control small{color:var(--muted)}
+
+.card-quality{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
+.card-line-metric{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 8px}
+.card-line-metric>small{font-size:11px;color:var(--muted)}
+.detail-detection{font-size:12px;color:var(--muted);line-height:1.6;margin:0 0 12px}
+
+/* Playback-first dialog: one compact toolbar, video, essential feedback. */
+#playerDialog{padding:0;overflow:auto;max-height:calc(100dvh - 24px)}
+#playerDialog .player-toolbar{display:flex;align-items:center;gap:12px;padding:10px 14px;min-width:0}
+#playerDialog h2{margin:0;font-size:16px;min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#playerDialog .player-line-control{margin:0;display:block;min-width:0;max-width:55%;flex:0 1 360px}
+#playerLine{width:100%;min-width:0;font-size:12px;padding:6px 9px;height:34px;text-overflow:ellipsis}
+#closePlayer{flex:none;width:34px;height:34px;padding:0;border:0;background:var(--fill);border-radius:50%;font-size:24px;line-height:1}
+#playerDialog #previewVideo{border-radius:0;max-height:calc(100dvh - 130px);object-fit:contain}
+#playerDialog .player-feedback{margin:0;padding:7px 14px;gap:10px;font-size:12px;min-height:30px}
+#playerStatus{min-width:0;overflow-wrap:anywhere}
+#retryPlayer{flex:none;font-size:12px;padding:4px 8px}
+@media(max-width:560px){
+ #playerDialog{width:calc(100vw - 16px)}
+ #playerDialog .player-toolbar{gap:8px;padding:8px 10px}
+ #playerDialog h2{font-size:14px}
+ #playerDialog .player-line-control{max-width:52%;flex-basis:190px}
+ #playerLine{font-size:12px;padding-inline:6px}
+}

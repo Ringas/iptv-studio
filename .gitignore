@@ -13,3 +13,5 @@ node_modules/
 /dist/
 /build/
 demo-dist/
+
+.DS_Store
