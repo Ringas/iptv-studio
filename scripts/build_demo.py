@@ -24,7 +24,7 @@ with tempfile.TemporaryDirectory() as data:
         channels=service.catalog(c)
         settings=service.config(c)
         for index,channel in enumerate(channels): channel['group']='演示频道' if index<4 else '更多频道'
-    state=dict(preview=True,settings=settings,channels=channels,exported=sum(bool(c['enabled']) for c in channels),lines=sum(r['enabled'] for c in channels for r in c['lines']),sources=[dict(id=1,name='演示直播订阅',kind='playlist',url='https://subscription.example.invalid/demo.m3u',priority=1,enabled=True,last='模拟数据 · 不连接真实直播源',updated=0,interval_hours=0,next_update=0,guide_urls=[])],password_mode='off',hidden=[],hidden_groups={},hidden_channels={},rules={})
+    state=dict(timezone='Asia/Shanghai',preview=True,settings=settings,channels=channels,exported=sum(bool(c['enabled']) for c in channels),lines=sum(r['enabled'] for c in channels for r in c['lines']),sources=[dict(id=1,name='演示直播订阅',kind='playlist',url='https://subscription.example.invalid/demo.m3u',priority=1,enabled=True,last='模拟数据 · 不连接真实直播源',updated=0,interval_hours=0,next_update=0,guide_urls=[])],password_mode='off',hidden=[],hidden_groups={},hidden_channels={},rules={})
 
 out=ROOT/'demo-dist'
 out.mkdir(exist_ok=True)

@@ -29,7 +29,7 @@ def main():
   def save(speed=100,height=720,criteria='both'):
    request('/api/settings',dict(hours=8,auto_probe=True,strict=True,mode='merge',probe_mode='pipeline',criteria=criteria,min_speed=speed,min_height=height))
   def state():
-   result=json.loads(request('/api/state'));rows={r['url']:r for ch in result['channels'] for r in ch['lines']}
+   result=json.loads(request('/api/state'));assert result['timezone']==service.os.getenv('TZ','Asia/Shanghai');rows={r['url']:r for ch in result['channels'] for r in ch['lines']}
    exported=json.loads(request('/live.json'));expected=[r['url'] for ch in result['channels'] for r in ch['lines'] if r['published']]
    assert [r['url'] for ch in exported for r in ch['lines']]==expected
    assert [line for line in request('/live.m3u').decode().splitlines() if line and not line.startswith('#')]==expected

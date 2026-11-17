@@ -87,10 +87,14 @@ def event_style(name, level, result=None, content_type=None):
     return category,label,log_type(name,content_type)
 
 
+def runtime_timezone():
+    try: return ZoneInfo(os.getenv('TZ','Asia/Shanghai'))
+    except ZoneInfoNotFoundError: return ZoneInfo('Asia/Shanghai')
+
+
 class EventFormatter(logging.Formatter):
     def format(self, record):
-        try: timezone=ZoneInfo(os.getenv('TZ','Asia/Shanghai'))
-        except ZoneInfoNotFoundError: timezone=ZoneInfo('Asia/Shanghai')
+        timezone=runtime_timezone()
         stamp=datetime.now(timezone).isoformat(sep=' ',timespec='milliseconds')[:23]
         data = {**safe(record.fields),'time':stamp,'timezone':timezone.key,'log_type':log_type(record.event,record.fields.get('log_type')),
                 'level':record.levelname,'event':record.event,'message':safe(record.getMessage())}

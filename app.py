@@ -16,7 +16,7 @@ from service import ROOT,DATA,LOCK,job,init,db,config,catalog,epg,selected,edit,
 from catalog import export,xmltv_stamp
 from catalog import xmlroot
 import webplay
-from diagnostics import bind, event, exception as diagnostic_exception
+from diagnostics import bind, event, exception as diagnostic_exception, runtime_timezone
 
 HOST=os.getenv('BIND','127.0.0.1')
 PORT=int(os.getenv('PORT','8788'))
@@ -167,7 +167,7 @@ class Handler(BaseHTTPRequestHandler):
                     for row in c.execute('select source_id,url from playlist_epg order by rowid'):
                         linked.setdefault(row['source_id'],[]).append(row['url'])
                     for source in sources:source['guide_urls']=linked.get(source['id'],[])
-                    res={'preview':os.getenv('STUDIO_PREVIEW')=='1','settings':settings,'channels':channels,'exported':len(active),'lines':sum(len(ch['lines']) for ch in active),
+                    res={'timezone':runtime_timezone().key,'preview':os.getenv('STUDIO_PREVIEW')=='1','settings':settings,'channels':channels,'exported':len(active),'lines':sum(len(ch['lines']) for ch in active),
                          'sources':sources,'password_mode':'deployment' if PASSWORD else 'enabled' if c.execute('select 1 from admin_access').fetchone() else 'off',
                          'hidden_groups':hidden_groups,'hidden_channels':hidden_channels,
                          'hidden':hidden_items,

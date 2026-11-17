@@ -1,6 +1,17 @@
 const $=id=>document.getElementById(id);
 const esc=x=>String(x??'').replace(/[<>&"']/g,v=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[v]));
 let state, editing, wasRunning=false, busy=false, noticeTimer;
+function formatTime(value){
+ if(value==null||value==='')return '未知';
+ const date=new Date(typeof value==='number'?value*1000:value);
+ if(!Number.isFinite(date.getTime()))return '未知';
+ let timezone=state?.timezone||'Asia/Shanghai',parts;
+ const options={year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'};
+ try{parts=new Intl.DateTimeFormat('en-GB',{...options,timeZone:timezone}).formatToParts(date);}
+ catch{parts=new Intl.DateTimeFormat('en-GB',{...options,timeZone:'Asia/Shanghai'}).formatToParts(date);}
+ const p=Object.fromEntries(parts.map(({type,value})=>[type,value]));
+ return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}.${String(date.getUTCMilliseconds()).padStart(3,'0')}`;
+}
 // Normalize legacy diagnostic wording at display time; stored records stay unchanged.
 function diagnosticText(value){
  return String(value??'').replace(/测速/g,'检测').replace(/测试时间/g,'检测时间').replace(/秒后测试/g,'秒后检测').replace(/测试目标/g,'检测目标').replace(/要测试的线路/g,'要检测的线路');
@@ -87,7 +98,7 @@ async function reload(live=false){
    f.hours.value=cfg.minutes/60;f.mode.value=cfg.mode;f.strict.checked=cfg.strict;f.auto_probe.checked=cfg.auto_probe;
    updateCriteriaFields();
  }
- $('next').textContent=state.preview?'预览中暂停定时任务':cfg.next?'下次计划更新　'+new Date(cfg.next*1000).toLocaleString():'定时更新已关闭';
+ $('next').textContent=state.preview?'预览中暂停定时任务':cfg.next?'下次计划更新　'+formatTime(cfg.next):'定时更新已关闭';
 }
 const selections={lines:new Set(),channels:new Set()};
 function renderAccess(mode){
@@ -702,7 +713,7 @@ async function programmeList(key){
  let rows;
  try{rows=await guideCache.get(key);}catch(err){guideCache.delete(key);throw err;}
  return rows.length?rows.map(p=>{
-   const time=p.timestamp!=null?new Date(p.timestamp*1000).toLocaleString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}):p.start;
+   const time=p.timestamp!=null?formatTime(p.timestamp):p.start;
    return `<div class="programme"><time title="${esc(p.start)}">${esc(time)}</time><b>${esc(p.title)}</b></div>`;
  }).join(''):'暂无匹配节目。可在频道详情调整节目单 ID。';
 }
@@ -759,7 +770,7 @@ async function showPopup(button){
    if(reason==='分辨率未知')reason+=`：未能识别尺寸，要求高度至少 ${cfg.min_height} 像素`;
    const result=metricText(reason,speedTones.get(speedStatus(r.assessment)));
    const details=[t.speed!=null?r.speed_display:'',playbackLabel(t),t.fallback?'已降档':'',t.httpStatus?'HTTP '+t.httpStatus:''].filter(Boolean);
-   body.innerHTML=`${result}${details.length?`<p>${esc(details.join(' · '))}</p>`:''}${notes.length?`<p>${esc(diagnosticText(notes.join('；')))}</p>`:''}<small>检测时间</small><p>${esc(t.at||'未知')}</p><small>线路地址</small><code>${esc(r.url)}</code>`;
+   body.innerHTML=`${result}${details.length?`<p>${esc(details.join(' · '))}</p>`:''}${notes.length?`<p>${esc(diagnosticText(notes.join('；')))}</p>`:''}<small>检测时间</small><p>${esc(formatTime(t.at))}</p><small>线路地址</small><code>${esc(r.url)}</code>`;
  }else if(address){
    const line=c.lines.find(r=>r.url===address);
    if(!line){closePopup();return;}
@@ -805,7 +816,7 @@ function renderFeeds(){
    <div class="feed-address"><small>订阅地址</small><p class="url">${esc(s.url)}</p></div>
    <dl class="feed-facts"><div><dt>自动更新</dt><dd>${esc(sourceSchedule(s))}</dd></div><div><dt>资料优先级</dt><dd>${s.priority}</dd></div></dl>
    ${s.guide_urls?.length?`<details class="feed-guides"><summary>自带节目单 <span>${s.guide_urls.length}</span></summary>${s.guide_urls.map(url=>`<p class="url">${esc(url)}</p>`).join('')}</details>`:''}
-   <div class="feed-bottom"><small><span class="feed-result-label">最近更新${s.updated?' · '+esc(new Date(s.updated*1000).toLocaleString()):''}</span>${esc(s.last||'尚未更新，保存后可更新订阅')}</small><button type="button" data-feed="${s.id}" aria-label="编辑 ${esc(s.name)}">编辑订阅</button></div>
+   <div class="feed-bottom"><small><span class="feed-result-label">最近更新${s.updated?' · '+esc(formatTime(s.updated)):''}</span>${esc(s.last||'尚未更新，保存后可更新订阅')}</small><button type="button" data-feed="${s.id}" aria-label="编辑 ${esc(s.name)}">编辑订阅</button></div>
  </article>`).join('')||'<div class="source-empty"><h2>添加你的第一个订阅</h2><p>接入直播清单或 XMLTV 节目单，统一管理更新与发布。</p><button type="button" id="emptyAddSource" class="primary">添加订阅</button></div>';
  if($('emptyAddSource'))$('emptyAddSource').onclick=()=>editSource();
  applyHelp($('feeds'));
@@ -814,7 +825,7 @@ function sourceSchedule(s){
  const hours=s.interval_hours??state.settings.minutes/60;
  const plan=(s.interval_hours==null?'跟随默认 · ':'')+(hours?'每 '+Number(hours.toFixed(4))+' 小时':'自动更新已关闭');
  if(state.preview&&s.next_update)return plan+' · 预览中暂停调度';
- return plan+(s.next_update?' · 下次更新 '+new Date(s.next_update*1000).toLocaleString():'');
+ return plan+(s.next_update?' · 下次更新 '+formatTime(s.next_update):'');
 }
 function editSource(id){
  const s=state.sources.find(x=>x.id===id)||{enabled:1,priority:10,kind:'playlist'};
@@ -969,7 +980,7 @@ function detailMetrics(r){
  if(history?.length)metrics.push(`近 ${history.length} 次检测直连成功 ${history.reduce((n,x)=>n+x,0)}/${history.length}`);
  if(r.test.stalls!=null)metrics.push(`播放观察 ${r.test.play_seconds??r.test.seconds} 秒 · ${r.test.segments} 片 · 预计卡顿 ${r.test.stalls} 次（${r.test.stall_seconds} 秒）`);
  if(r.test.bitrate)metrics.push(`${r.test.fallback?'已降档 · ':''}所测档位 ${(r.test.bitrate/1e6).toFixed(2)} Mbps`);
- if(r.test.at)metrics.push(esc(new Date(r.test.at).toLocaleString()));
+ if(r.test.at)metrics.push(esc(formatTime(r.test.at)));
  metrics.push(...(r.test.note||[]).map(note=>esc(diagnosticText(note))));
  return metrics.join('　');
 }
