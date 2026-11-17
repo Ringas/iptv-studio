@@ -52,6 +52,9 @@ def main(image, context):
         docker('exec', name, 'python3', '-c', 'from pathlib import Path;processes=[p for p in Path("/proc").glob("[0-9]*/status") if p.with_name("cmdline").read_bytes().split(bytes([0]))[:2]==[b"python3",b"app.py"]];assert processes;assert all(set(p.read_text().split("Uid:")[1].splitlines()[0].split())=={"1000"} for p in processes)')
         docker('exec', '-u', '1000:1000', name, 'python3', '-c', 'from pathlib import Path;Path("/app/data/restart-check").write_text("retained")')
         docker('restart', name)
+        # Docker may allocate another host port when restarting an ephemeral binding.
+        port = json.loads(docker('inspect', name))[0]['NetworkSettings']['Ports']['8787/tcp'][0]['HostPort']
+        base = f'http://127.0.0.1:{port}'
         ready()
         docker('exec', name, 'python3', '-c', 'from pathlib import Path;assert Path("/app/data/restart-check").read_text()=="retained";assert Path("/app/data/hub.sqlite").is_file()')
         assert json.loads(request('/api/state'))['settings'] == settings
