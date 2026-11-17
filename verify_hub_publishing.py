@@ -1,4 +1,4 @@
-"""用模拟接口验证说明同步、错误脱敏与旧标签清理的严格范围。"""
+"""用模拟接口验证说明同步、错误脱敏及无删除操作。"""
 import io
 from pathlib import Path
 from unittest.mock import patch
@@ -19,13 +19,9 @@ def fake(method,path,token=None,data=None,missing_ok=False):
 with patch.dict(hub.os.environ,{'HUB_TOKEN':'private-test-token'}),patch.object(hub,'request',side_effect=fake):
     hub.main('update')
 assert [method for method,_,_ in calls]==['POST','PATCH','GET']
-calls.clear()
-with patch.dict(hub.os.environ,{'HUB_TOKEN':'private-test-token'}),patch.object(hub,'request',side_effect=fake):
-    hub.main('remove-v1.1.0')
-assert [path for method,path,_ in calls if method=='DELETE']==[hub.REPOSITORY+'tags/v1.1.0/']
-assert not any('latest' in path for _,path,_ in calls)
+assert not any(method=='DELETE' for method,_,_ in calls)
 with patch.object(hub,'urlopen',side_effect=HTTPError('https://hub.docker.com/private',403,'bad',{},io.BytesIO(b'private-test-token'))):
-    try:hub.request('DELETE',hub.REPOSITORY+'tags/v1.1.0/',token='private-test-token')
+    try:hub.request('PATCH',hub.REPOSITORY,token='private-test-token')
     except RuntimeError as error:assert '403' in str(error) and 'private-test-token' not in str(error)
     else:raise AssertionError('Expected a permission error')
-print('通过：中文说明链接、版本、旧标签删除边界与凭证错误脱敏')
+print('通过：中文说明链接、版本、无删除操作与凭证错误脱敏')

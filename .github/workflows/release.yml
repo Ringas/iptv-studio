@@ -108,18 +108,3 @@ jobs:
         env:
           HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: python3 scripts/docker_hub.py update
-      - name: 清理本次替换的旧版 v1.1.0 镜像和发布
-        if: env.TAG == 'v1.1.1'
-        env:
-          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          python3 scripts/docker_hub.py remove-v1.1.0
-          old=$(gh api "repos/$GH_REPO/releases" --paginate --jq '.[] | select(.tag_name=="v1.1.0") | .id')
-          if [[ -n "$old" ]]; then
-            gh api --method DELETE "repos/$GH_REPO/releases/$old"
-          fi
-          ref=$(gh api "repos/$GH_REPO/git/matching-refs/tags/v1.1.0" --jq '.[] | select(.ref=="refs/tags/v1.1.0") | .ref')
-          if [[ -n "$ref" ]]; then
-            gh api --method DELETE "repos/$GH_REPO/git/refs/tags/v1.1.0"
-          fi

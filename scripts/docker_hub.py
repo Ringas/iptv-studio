@@ -1,4 +1,4 @@
-"""维护本项目 Docker Hub 说明与已获授权清理的旧标签，不输出凭证。"""
+"""同步本项目 Docker Hub 中文说明，不输出凭证。"""
 import argparse
 import json
 import os
@@ -12,7 +12,7 @@ BASE = 'https://hub.docker.com'
 REPOSITORY = '/v2/repositories/talktoo/iptv-studio/'
 
 
-def request(method, path, token=None, data=None, missing_ok=False):
+def request(method, path, token=None, data=None):
     headers = {'Accept': 'application/json', 'User-Agent': 'IPTV-Studio-Release'}
     if token: headers['Authorization'] = 'Bearer '+token
     body = None
@@ -26,7 +26,6 @@ def request(method, path, token=None, data=None, missing_ok=False):
     except HTTPError as error:
         status = error.code
         error.close()
-        if missing_ok and status == 404: return None
         raise RuntimeError(f'Docker Hub 操作失败：HTTP {status}（{method} {path}），请检查凭证权限') from None
 
 
@@ -62,17 +61,11 @@ def main(action):
         updated = request('GET', REPOSITORY, token)
         if updated.get('full_description') != text: raise RuntimeError('Docker Hub 说明保存后的内容不一致')
         print('Docker Hub 中文说明已更新并核对一致')
-    elif action == 'remove-v1.1.0':
-        # Intentionally fixed scope: never delete the repository, latest or other tags.
-        path = REPOSITORY+'tags/v1.1.0/'
-        if request('GET', path, token, missing_ok=True) is not None:
-            request('DELETE', path, token)
-        if request('GET', path, token, missing_ok=True) is not None: raise RuntimeError('旧版 v1.1.0 标签仍可访问')
-        print('Docker Hub 旧版 v1.1.0 标签已删除并确认不可访问')
+
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['check', 'update', 'remove-v1.1.0'])
+    parser.add_argument('action', choices=['check', 'update'])
     try: main(parser.parse_args().action)
     except RuntimeError as error: raise SystemExit(str(error)) from None
