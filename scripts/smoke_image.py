@@ -49,7 +49,7 @@ def main(image, context):
         actual = json.loads(docker('exec', name, 'python3', '-c', 'import json;from pathlib import Path;print(json.dumps(sorted(p.name for p in Path("/app").iterdir() if p.name!="data")))'))
         assert expected == actual, (expected, actual)
         assert 'LICENSE' in actual and 'hls-LICENSE.txt' in actual
-        docker('exec', name, 'python3', '-c', 'from pathlib import Path;processes=[p for p in Path("/proc").glob("[0-9]*/status") if b"app.py" in p.with_name("cmdline").read_bytes().split(bytes([0]))];assert processes;assert all(set(p.read_text().split("Uid:")[1].splitlines()[0].split())=={"1000"} for p in processes)')
+        docker('exec', name, 'python3', '-c', 'from pathlib import Path;processes=[p for p in Path("/proc").glob("[0-9]*/status") if p.with_name("cmdline").read_bytes().split(bytes([0]))[:2]==[b"python3",b"app.py"]];assert processes;assert all(set(p.read_text().split("Uid:")[1].splitlines()[0].split())=={"1000"} for p in processes)')
         docker('exec', '-u', '1000:1000', name, 'python3', '-c', 'from pathlib import Path;Path("/app/data/restart-check").write_text("retained")')
         docker('restart', name)
         ready()
