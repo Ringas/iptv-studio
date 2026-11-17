@@ -34,19 +34,18 @@
           <label for="defaultHours">默认更新间隔<small>跟随默认设置的订阅按此间隔更新；填 0 关闭。</small></label>
           <div class="number-unit"><input id="defaultHours" name="hours" type="number" min="0" max="720" step="any" required><span>小时</span></div>
         </div>
-        <label class="pref-row" for="autoProbe"><span>更新后检测<small>定时更新成功后，自动检测该订阅的线路。</small></span><input id="autoProbe" class="pref-switch" type="checkbox" role="switch" name="auto_probe"></label>
+        <div class="pref-row"><span><span id="autoProbeLabel">更新后检测</span><small id="autoProbeHint">定时更新成功后，自动检测该订阅的线路。</small></span><input aria-labelledby="autoProbeLabel" aria-describedby="autoProbeHint" id="autoProbe" class="pref-switch" type="checkbox" role="switch" name="auto_probe"></div>
         <div class="plan-status"><span id="next"></span></div>
       </section>
       <section class="pref-panel" aria-labelledby="publishTitle">
         <h2 id="publishTitle">线路发布</h2>
         <div class="pref-row"><label for="publishMode">同频道多条线路<small id="publishModeHint"></small></label><select id="publishMode" aria-describedby="publishModeHint" name="mode"><option value="merge">保留多条线路</option><option value="best">仅发布最优线路</option></select></div>
-        <label class="pref-row" for="strictMode"><span>按检测结果自动启停<small>开启后，各检测入口的首次明确结果决定启停，替代手动选择。同任务异常复测不改启停。</small></span><input id="strictMode" class="pref-switch" type="checkbox" role="switch" name="strict"></label>
+        <div class="pref-row"><span><span id="strictModeLabel">按检测结果自动启停</span><small id="strictModeHint">开启后，各检测入口的首次明确结果决定启停，替代手动选择。同任务异常复测不改启停。</small></span><input aria-labelledby="strictModeLabel" aria-describedby="strictModeHint" id="strictMode" class="pref-switch" type="checkbox" role="switch" name="strict"></div>
         <div class="criteria-box">
           <div class="pref-row"><label for="probeMode">检测方式<small id="probeModeHint">选择后查看此方式的说明。</small></label><select id="probeMode" aria-describedby="probeModeHint" name="probe_mode"><option value="adaptive">快速检测</option><option value="pipeline_dual">均衡检测</option><option value="continuous">深度检测</option></select></div>
-          <div class="pref-row"><label for="probeCriteria">检测通过条件<small id="probeCriteriaHint">速率与画面高度须同时达标。</small></label><select id="probeCriteria" aria-describedby="probeCriteriaHint criteriaEffect" name="criteria"><option value="speed">速率达标</option><option value="resolution">分辨率达标</option><option value="both" selected>速率与分辨率均达标</option></select></div>
+          <div class="pref-row"><label for="probeCriteria">检测通过条件<small id="probeCriteriaHint">速率与画面高度须同时达标。</small></label><select id="probeCriteria" aria-describedby="probeCriteriaHint" name="criteria"><option value="speed">速率达标</option><option value="resolution">分辨率达标</option><option value="both" selected>速率与分辨率均达标</option></select></div>
           <div class="pref-row" id="speedRule"><label for="minSpeed">速率高于</label><div class="number-unit"><input id="minSpeed" title="必须大于此值，等于不通过。" name="min_speed" type="number" min="0" step="any" required><span>KB/s</span></div></div>
           <div class="pref-row" id="heightRule"><label for="minHeight">画面高度至少</label><div class="number-unit"><input id="minHeight" title="画面高度须达到此值，等于也通过。" name="min_height" type="number" min="1" max="16384" required><span>像素</span></div></div>
-          <p id="criteriaEffect" class="secondary">保存后重新判定已有结果；验证不足的线路仍需检测。手动启停保持不变。</p>
         </div>
       </section>
       <div class="pref-save"><span id="saveStatus" role="status"></span><button class="primary">保存设置</button></div>

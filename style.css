@@ -214,9 +214,10 @@ dialog::backdrop{backdrop-filter:blur(3px)}
 .number-unit:focus-within{outline:2px solid #66a9f0}
 .number-unit input[type=number]{width:7ch;padding:0;border:0;outline:none;text-align:right;font-variant-numeric:tabular-nums}
 .number-unit span{font-size:12px;color:var(--muted);white-space:nowrap}
-.pref-switch[type=checkbox]{appearance:none;flex:none;width:36px;height:22px;margin:0;padding:2px;border:1px solid #b8b8bf;border-radius:20px;background:#d5d5da;cursor:pointer}
+:root{--switch-duration:.16s;--switch-easing:ease}
+.pref-switch[type=checkbox]{appearance:none;flex:none;width:36px;height:22px;margin:0;padding:2px;border:1px solid #b8b8bf;border-radius:20px;background:#d5d5da;cursor:pointer;transition:background-color var(--switch-duration) var(--switch-easing),border-color var(--switch-duration) var(--switch-easing)}
 .pref-switch:checked{background:var(--accent);border-color:var(--accent)}
-.pref-switch::before{content:"";display:block;width:16px;height:16px;background:white;border-radius:50%;box-shadow:0 1px 3px #0003}
+.pref-switch::before{content:"";display:block;width:16px;height:16px;background:white;border-radius:50%;box-shadow:0 1px 3px #0003;transition:transform var(--switch-duration) var(--switch-easing)}
 .pref-switch:checked::before{transform:translateX(14px)}
 @media(forced-colors:active){.pref-switch[type=checkbox]{appearance:auto}.pref-switch::before{display:none}}
 .plan-status{border-top:1px solid var(--line);padding-top:10px}
@@ -371,8 +372,8 @@ button.metric-result.pass,button.metric-result.pass:enabled:hover{background:tra
 
 /* Switches show the saved state; batch buttons name the action. */
 button.state-switch{position:relative;display:inline-flex;align-items:center;min-height:32px;flex-shrink:0;white-space:nowrap;padding:4px 6px 4px 44px;border:1px solid transparent;border-radius:9px;background:transparent;color:var(--muted);font-size:12px;line-height:20px;font-weight:600;text-decoration:none}
-button.state-switch::before{content:"";position:absolute;left:4px;top:50%;transform:translateY(-50%);width:32px;height:20px;border-radius:12px;background:#8e949e;transition:background .16s}
-button.state-switch::after{content:"";position:absolute;left:6px;top:50%;transform:translateY(-50%);width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0003;transition:left .16s}
+button.state-switch::before{content:"";position:absolute;left:4px;top:50%;transform:translateY(-50%);width:32px;height:20px;border-radius:12px;background:#8e949e;transition:background-color var(--switch-duration) var(--switch-easing)}
+button.state-switch::after{content:"";position:absolute;left:6px;top:50%;transform:translateY(-50%);width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0003;transition:left var(--switch-duration) var(--switch-easing)}
 button.state-switch[aria-checked=true]{color:#14643b}
 button.state-switch[aria-checked=true]::before{background:#248657}
 button.state-switch[aria-checked=true]::after{left:18px}

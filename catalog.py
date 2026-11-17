@@ -173,15 +173,15 @@ def activation_assessment(test, settings):
     return assess(test,settings)
 
 def result_views(test, settings):
-    # Immutable historical evidence is distinct from a projection under today's policy.
+    # Display stored conclusions; saved settings are only used by the next probe.
     recorded=test.get('evidence',{}).get('qualification',{})
     historical=recorded.get('assessment') or ('未测' if not test or set(test)<= {'inconclusive','status','last_attempt'} else '历史结论未知')
+    current=recorded.get('assessment') or test.get('result_assessment') or assess(test,settings)
     detection={'assessment':historical,'state':assessment_state(historical),'at':test.get('at'),
                'policy':qualification_policy(recorded) if all(k in recorded for k in ('criteria','min_speed','min_height')) else None}
-    current=assess(test,settings)
-    return {'detection':detection,'activation_assessment':activation_assessment(test,settings),'current_qualification':{'assessment':current,'state':assessment_state(current),
-            'policy':qualification_policy(settings),'policy_changed':policy_changed(test,settings),'based_on':test.get('at'),
-            'retained_after_attempt':bool(test.get('last_attempt'))}}
+    control=test.get('recheck_control',{}).get('assessment',current)
+    return {'detection':detection,'activation_assessment':control,'current_qualification':{'assessment':current,'state':assessment_state(current),
+            'based_on':test.get('at'),'retained_after_attempt':bool(test.get('last_attempt'))}}
 
 def assess(test, settings):
     if test.get('inconclusive'):return '未能验证'

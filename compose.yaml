@@ -7,7 +7,6 @@ services:
       - "8787:8787"
     environment:
       PORT: "8787"
-      TZ: Asia/Shanghai
     volumes:
       - ./data:/app/data
     restart: always

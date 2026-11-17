@@ -80,7 +80,7 @@ with tempfile.TemporaryDirectory() as temp:
         ch=next(c for c in st['channels'] if c['name']=='CCTV1综合')
         assert len(ch['lines'])==2 and ch['lines'][0]['from']==['A','B'] and ch['epg']=='x'
         assert ch['logo']==origin+'/icons/one.svg'
-        cfg=dict(probe_mode='legacy',minutes=1,mode='merge',strict=False,auto_probe=False)
+        cfg=dict(probe_mode='legacy',minutes=480,mode='merge',strict=False,auto_probe=False)
         api('settings',cfg)
         def visibility(kind,name,hide=True,url=''):
             api('visibility',dict(kind=kind,name=name,hide=hide,url=url))
@@ -211,7 +211,8 @@ with tempfile.TemporaryDirectory() as temp:
         assert t['resolution']=={'width':1280,'height':720,'source':'末片视频头'}
         def line_state(path):
             return next(r for c in api('state')['channels'] for r in c['lines'] if r['url']==origin+path)
-        for criterion,height,threshold,num in [('resolution',720,999999,1),('resolution',1080,0,0),('both',720,999999,0),('speed',1080,0,1)]:
+        num=int(line_state('/master')['assessment'] in ('保留','待复测'))
+        for criterion,height,threshold in [('resolution',720,999999),('resolution',1080,0),('both',720,999999),('speed',1080,0)]:
             api('settings',{**cfg,'strict':True,'criteria':criterion,'min_height':height,'min_speed':threshold})
             assert len(json.loads(request('/live.json')))==num
             assert line_state('/master')['enabled'] is bool(num) and not line_state('/fail')['enabled']

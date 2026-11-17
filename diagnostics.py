@@ -62,20 +62,46 @@ def safe(value, depth=0):
     return re.sub(r'[\x00-\x1f\x7f]', ' ', text)[:1600]
 
 
+def color_enabled():
+    mode=os.getenv('IPTV_LOG_COLOR','auto').lower()
+    if mode in ('never','0','false') or 'NO_COLOR' in os.environ: return False
+    if mode in ('always','1','true'): return True
+    return bool(getattr(sys.stdout,'isatty',lambda:False)()) or Path('/.dockerenv').exists() or Path('/run/.containerenv').exists()
+
+
+def log_type(name, explicit=None):
+    # Semantic event kind, independent of level or pass/fail outcome.
+    if explicit in ('progress','result','policy','summary','diagnostic'): return explicit
+    if name in ('probe.retry_scheduled','probe.wait','route.activation','record.history'): return 'policy'
+    if name in ('task.finished','play.finished'): return 'summary'
+    if name in ('record.probe','record.refresh','probe.finished','probe.attempt','play.manifest'): return 'result'
+    if name in ('http.response','probe.buffer') or name.endswith(('.error','_error','.failed')): return 'diagnostic'
+    return 'progress'
+
+
+def event_style(name, level, result=None, content_type=None):
+    category={'record.probe':'检测','record.refresh':'更新','record.history':'操作'}.get(name)
+    if category is None:
+        category={'probe':'检测','refresh':'更新','play':'播放','route':'线路','server':'服务','http':'访问','scheduler':'计划','task':'任务'}.get(name.split('.')[0],'运行')
+    label=result if result in ('通过','成功','失败','未通过','部分失败','未能验证','待复测','已跳过','已终止') else {'DEBUG':'诊断','INFO':'信息','WARNING':'提醒','ERROR':'错误','CRITICAL':'错误'}.get(level,'信息')
+    return category,label,log_type(name,content_type)
+
+
 class EventFormatter(logging.Formatter):
     def format(self, record):
         try: timezone=ZoneInfo(os.getenv('TZ','Asia/Shanghai'))
         except ZoneInfoNotFoundError: timezone=ZoneInfo('Asia/Shanghai')
-        data = {'time': datetime.now(timezone).isoformat(timespec='milliseconds'),
-                'level': record.levelname, 'event': record.event, 'message': safe(record.getMessage()),
-                **safe(record.fields)}
-        if os.getenv('IPTV_LOG_FORMAT', 'text').lower() == 'json':
-            return json.dumps(data, ensure_ascii=False, allow_nan=False)
-        detail = record.fields
-        prefix = ' · '.join(str(detail[key]) for key in ('channel', 'line', 'source') if detail.get(key))
-        parts = [prefix] if prefix else []
-        if detail.get('attempt'): parts.append('异常复测' if detail['attempt']=='recheck' else '首测')
-        if detail.get('result'): parts.append(str(detail['result']))
+        stamp=datetime.now(timezone).isoformat(sep=' ',timespec='milliseconds')[:23]
+        data = {**safe(record.fields),'time':stamp,'timezone':timezone.key,'log_type':log_type(record.event,record.fields.get('log_type')),
+                'level':record.levelname,'event':record.event,'message':safe(record.getMessage())}
+        if os.getenv('IPTV_LOG_FORMAT','text').lower()=='json':
+            return json.dumps(data,ensure_ascii=False,allow_nan=False)
+        detail=record.fields
+        category,label,tone=event_style(record.event,record.levelname,detail.get('result'),detail.get('log_type'))
+        prefix=' · '.join(str(detail[key]) for key in ('channel','line','source') if detail.get(key))
+        parts=[prefix] if prefix else []
+        if detail.get('attempt'): parts.append('复测' if detail['attempt']=='recheck' else '首测')
+        if detail.get('result') and detail['result']!=label: parts.append(str(detail['result']))
         parts.append(data['message'].replace('测速','检测'))
         if detail.get('reason'): parts.append('原因：'+str(safe(detail['reason']))[:400])
         if detail.get('elapsed_ms') is not None: parts.append(f"耗时 {detail['elapsed_ms']/1000:.1f} 秒")
@@ -85,12 +111,12 @@ class EventFormatter(logging.Formatter):
         if detail.get('bytes') is not None: parts.append(f"已传输 {detail['bytes']/1024/1024:.1f} MB")
         if detail.get('media_requests') is not None: parts.append(f"媒体请求 {detail['media_requests']} 次，完整传输 {detail.get('media_completed',0)} 次")
         if detail.get('tip'): parts.append(str(detail['tip']))
-        if record.levelno==logging.DEBUG:
-            parts.append(json.dumps(data, ensure_ascii=False, separators=(',', ':')))
-        level = {'DEBUG':'诊断','INFO':'信息','WARNING':'提醒','ERROR':'错误','CRITICAL':'严重错误'}.get(record.levelname,record.levelname)
-        stamp=data['time'].replace('T',' ')
-        stamp=stamp[:-6]+' '+stamp[-6:]
-        return f'[{stamp}] [{level}] '+str(safe(' ｜ '.join(parts)))
+        if record.levelno==logging.DEBUG: parts.append(json.dumps(data,ensure_ascii=False,separators=(',',':')))
+        # Restrained midtone colors keep complete lines readable on light/dark viewers.
+        colors={'progress':31,'result':28,'policy':130,'summary':130,'diagnostic':244}
+        kind={'progress':'进度','result':'结果','policy':'策略','summary':'统计','diagnostic':'诊断'}[tone]
+        line=f'[{stamp}] [{category}·{kind}] [{label}] '+str(safe(' ｜ '.join(parts)))
+        return f'\x1b[38;5;{colors[tone]}m{line}\x1b[0m' if color_enabled() else line
 
 
 

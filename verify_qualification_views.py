@@ -21,7 +21,9 @@ def main():
   records={k:record() for k in labels}
   records['oldfailed']=record(threshold=200,assessment='速率未达标')
   records['legacy'].pop('evidence')
+  records['coarse']=record(assessment='未能验证')
   records['coarse'].update(advanced=False,coarse_rejected=True)
+  records['grace']=record(assessment='待复测')
   records['grace'].update(quality='暂时失败',stable_qualified=True,grace=True)
   with service.db() as c:
    c.execute("insert into sources(name,kind,priority,enabled,items) values('fixture','playlist',1,1,?)",(service.encode([dict(name=k,url=u,attrs={},options=[]) for k,u in urls.items()]),))
@@ -51,15 +53,19 @@ def main():
     for label in ('auto','on','off'):
      r=rows[urls[label]]
      assert r['detection']['assessment']=='保留' and r['detection']['policy']['min_speed']==100
-     assert r['current_qualification']['policy']['min_speed']==threshold
-     assert r['current_qualification']['state']==('passed' if threshold<150 else 'failed')
-     assert r['enabled']==(label=='on' or label=='auto' and threshold<150)
+     assert r['current_qualification']['state']=='passed'
+     assert r['enabled']==(label in ('on','auto'))
     assert rows[urls['oldfailed']]['detection']['assessment']=='速率未达标'
-    assert rows[urls['oldfailed']]['current_qualification']['state']==('passed' if threshold<150 else 'failed')
+    assert rows[urls['oldfailed']]['current_qualification']['state']=='failed'
     assert rows[urls['legacy']]['detection']['assessment']=='历史结论未知'
     assert rows[urls['coarse']]['current_qualification']['state']!='passed'
-    assert rows[urls['grace']]['assessment']==('待复测' if threshold==100 else '未能验证')
-    with service.db() as c:assert original==[tuple(r) for r in c.execute('select * from tests order by url')]
+    assert rows[urls['grace']]['assessment']=='待复测'
+    with service.db() as c:
+     for (url,raw),(old_url,old_raw) in zip(c.execute('select * from tests order by url'),original):
+      assert url==old_url
+      saved=json.loads(raw);snapshot=saved.pop('result_assessment',None)
+      assert saved==json.loads(old_raw)
+      if snapshot:assert snapshot==assess(saved,dict(criteria='both',min_speed=100,min_height=720))
    # Latest inconclusive attempt is separate; never rewrites prior pass or manual on.
    service.job.update(running=True,stop_queue=False,stop_line=False)
    # Mark deferred to avoid retrying in this isolated policy test.
@@ -94,5 +100,5 @@ def main():
  assert policy_changed(record(),dict(criteria='both',min_speed=100,min_height=720)) is False
  speed_only=record();speed_only['evidence']['qualification']['criteria']='speed'
  assert policy_changed(speed_only,dict(criteria='speed',min_speed=100,min_height=1080)) is False
- print('PASS: immutable history, raised/lowered policies, legacy unknowns, grace policy changes, manual overrides, deferred attempt, hidden inventory and API/JSON/M3U/TXT consistency.')
+ print('PASS: immutable history, saved policies pending remeasurement, legacy unknowns, grace policy changes, manual overrides, deferred attempt, hidden inventory and API/JSON/M3U/TXT consistency.')
 if __name__=='__main__':main()

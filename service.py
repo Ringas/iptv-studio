@@ -93,6 +93,14 @@ def config(c):
     # Explicitly saved UI choice wins; environment is only an initial fallback.
     cfg['probe_workers']=2 if str(cfg.get('probe_workers',os.getenv('IPTV_PROBE_WORKERS','1')))=='2' else 1
     return cfg
+def retain_legacy_results(c, cfg):
+    # Older records lack a stored conclusion; retain the displayed result, not a rule.
+    for row in c.execute('select url,result from tests').fetchall():
+        test=json.loads(row['result'])
+        if test and not test.get('evidence',{}).get('qualification',{}).get('assessment') and 'result_assessment' not in test:
+            test['result_assessment']=assess(test,cfg)
+            c.execute('update tests set result=? where url=?',(encode(test),row['url']))
+
 def save_config(c, cfg): c.execute("update settings set value=?",(encode(cfg),))
 def log(c,text,kind='history',**fields):
     fields.setdefault('task_id',current_task())
@@ -853,6 +861,8 @@ def edit(kind,p):
             height=int(p.get('min_height',cfg['min_height']))
             if criteria not in ('speed','resolution','both') or not math.isfinite(speed) or speed<0 or not 1<=height<=16384:
                 raise ValueError('测速条件无效')
+            if qualification_policy(cfg)!=dict(criteria=criteria,min_speed=speed,min_height=height):
+                retain_legacy_results(c,cfg)
             cfg.update(criteria=criteria,min_speed=speed,min_height=height)
             if hours!=cfg['minutes']/60:
                 c.execute('update sources set next_update=? where enabled and interval_hours is null',(deadline(hours),))

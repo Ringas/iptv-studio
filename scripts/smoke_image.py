@@ -49,7 +49,9 @@ def main(image, context):
         docker('exec', name, 'python3', '-c', 'import os,datetime;assert os.environ["TZ"]=="Asia/Shanghai";assert datetime.datetime.now().astimezone().utcoffset().total_seconds()==28800')
         docker('exec', name, 'node', '-e', 'if(new Date().getTimezoneOffset()!==-480)process.exit(1)')
         logs=docker('logs', name)
-        assert '频谱已启动' in logs and re.search(r'\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3} \+08:00',logs)
+        logs=re.sub(r'\x1b\[[0-9;]*m','',logs)
+        assert '频谱已启动' in logs and re.search(r'\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}',logs)
+        assert '+08:00' not in logs
         assert '/api/state' not in logs and '/health' not in logs
         expected = sorted(p.name for p in Path(context).iterdir() if p.name != 'Dockerfile')
         actual = json.loads(docker('exec', name, 'python3', '-c', 'import json;from pathlib import Path;print(json.dumps(sorted(p.name for p in Path("/app").iterdir() if p.name!="data")))'))

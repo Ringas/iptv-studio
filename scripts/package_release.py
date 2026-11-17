@@ -30,7 +30,7 @@ def package(tag, destination):
         def add(name, data):
             info = zipfile.ZipInfo(name)
             info.external_attr = 0o100644 << 16
-            archive.writestr(info, data, compress_type=zipfile.ZIP_DEFLATED)
+            archive.writestr(info, data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
         for name in allowed:
             add(name, (context / name).read_bytes())
         add(".dockerignore", (ROOT / ".dockerignore").read_bytes())

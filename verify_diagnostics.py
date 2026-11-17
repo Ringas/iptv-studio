@@ -4,6 +4,7 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 import os
 from pathlib import Path
 import tempfile
@@ -19,18 +20,18 @@ handler.setFormatter(d.EventFormatter())
 old=d.logger.handlers[:]
 d.logger.handlers=[handler]
 try:
-    with patch.dict(os.environ,{'IPTV_LOG_LEVEL':'INFO','IPTV_LOG_FORMAT':'text','TZ':'Asia/Shanghai'}):
+    with patch.dict(os.environ,{'IPTV_LOG_LEVEL':'INFO','IPTV_LOG_FORMAT':'text','TZ':'Asia/Shanghai','IPTV_LOG_COLOR':'never'}):
         with d.bind(task_id='a1'):
             d.event('probe.phase','内部读取中','DEBUG',phase='fetch')
             d.event('record.probe','流畅 · 2.50 MB/s · 1920 × 1080',channel='演示综合',source='示例订阅',result='通过',attempt='initial',url='https://u:p@example.invalid/private-token/stream?token=query-secret',diagnostic={'Authorization':'Basic basic-secret'})
         text=stream.getvalue()
-        assert '[信息]' in text and '演示综合' in text and '首测' in text and '2.50 MB/s' in text
+        assert '[检测·结果] [通过]' in text and '演示综合' in text and '首测' in text and '2.50 MB/s' in text
         assert 'probe.phase' not in text and 'task_id' not in text and 'diagnostic' not in text
         assert all(secret not in text for secret in ['query-secret','private-token','basic-secret','u:p'])
         assert len(text.splitlines())==1
-        assert re.match(r'\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3} \+08:00\]',text)
+        assert re.match(r'\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}\]',text)
     stream.seek(0);stream.truncate()
-    with patch.dict(os.environ,{'IPTV_LOG_FORMAT':'json','IPTV_LOG_LEVEL':'DEBUG','TZ':'Asia/Shanghai'}):
+    with patch.dict(os.environ,{'IPTV_LOG_FORMAT':'json','IPTV_LOG_LEVEL':'DEBUG','TZ':'Asia/Shanghai','IPTV_LOG_COLOR':'never'}):
         def worker(value):
             with d.bind(task_id=value):
                 d.event('test.secret','failed https://user:pass@example.invalid/secret-path?auth=private-query\nAuthorization: Bearer private-header',url='https://user:pass@example.invalid/secret-path?auth=private-query',headers={'Cookie':'private-cookie'},notes=['password=private-password'],phase='decode',value=float('nan'))
@@ -41,8 +42,9 @@ try:
         text=stream.getvalue();rows=[json.loads(line) for line in text.splitlines()]
         assert {row['task_id'] for row in rows[:2]}=={'one','two'} and 'task_id' not in rows[-1]
         assert all(word not in text for word in ['private-query','secret-path','private-header','private-cookie','private-password','user:pass'])
-        assert rows[0]['time'].endswith('+08:00')
-        assert abs((datetime.fromisoformat(rows[0]['time'])-datetime.now(timezone.utc)).total_seconds())<5
+        assert re.fullmatch(r'\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}',rows[0]['time'])
+        assert rows[0]['timezone']=='Asia/Shanghai'
+        assert abs((datetime.fromisoformat(rows[0]['time']).replace(tzinfo=ZoneInfo(rows[0]['timezone']))-datetime.now(timezone.utc)).total_seconds())<5
         assert rows[0]['phase']=='decode' and rows[0]['value'] is None
         assert d.route_id('https://a.invalid/1')!=d.route_id('https://a.invalid/2')
         assert d.safe('https://example.invalid/…#abcdefabcdef')=='https://example.invalid/…#abcdefabcdef'
@@ -60,6 +62,24 @@ try:
     env['LOG_FORMAT']='json'
     output=subprocess.check_output([sys.executable,'-c',"import diagnostics;diagnostics.event('default','简短中文提示')"],env=env,text=True)
     assert '[信息]' in output and not output.startswith('{')
+    stream.seek(0);stream.truncate()
+    with patch.dict(os.environ,{'IPTV_LOG_COLOR':'always','IPTV_LOG_FORMAT':'text','IPTV_LOG_LEVEL':'DEBUG'},clear=True):
+        for name,level,result in [('probe.started','INFO',None),('record.probe','INFO','通过'),('probe.retry_scheduled','WARNING',None),('task.finished','INFO',None),('probe.process_error','ERROR',None),('record.probe','WARNING','未能验证'),('record.probe','ERROR','未通过')]:
+            d.event(name,'整条日志按状态着色',level,result=result)
+        lines=stream.getvalue().splitlines()
+        assert len(lines)==7
+        for line,color in zip(lines,[31,28,130,130,244,28,28]):
+            assert f'\x1b[38;5;{color}m' in line and line.count('\x1b[')==2
+            assert line.startswith(f'\x1b[38;5;{color}m[') and line.endswith('整条日志按状态着色\x1b[0m') and '+08:00' not in line
+        stream.seek(0);stream.truncate()
+        with patch.dict(os.environ,{'NO_COLOR':'1'}):d.event('test','无颜色')
+        assert '\x1b' not in stream.getvalue()
+        stream.seek(0);stream.truncate()
+        with patch.dict(os.environ,{'IPTV_LOG_FORMAT':'json','TZ':'UTC'}):d.event('test','机器可读')
+        row=json.loads(stream.getvalue());assert row['timezone']=='UTC' and row['log_type']=='progress' and '\x1b' not in stream.getvalue()
+    with patch.dict(os.environ,{'IPTV_LOG_COLOR':'auto'},clear=True),patch.object(d.sys,'stdout',io.StringIO()),patch.object(d.Path,'exists',return_value=False):
+        assert not d.color_enabled()
+        with patch.object(d.Path,'exists',return_value=True):assert d.color_enabled()
     import service
     with tempfile.TemporaryDirectory() as temp, patch.object(service,'DATA',Path(temp)),patch.dict(os.environ,{'IPTV_LOG_LEVEL':'ERROR'}):
         service.init()

@@ -28,8 +28,9 @@ docker compose up -d
 | --- | --- |
 | `8787:8787` | 左侧为宿主机端口，右侧为容器端口。宿主机端口冲突时可改为 `8788:8787` |
 | `./data:/app/data` | 保存频道、订阅、设置、检测记录和管理密码。升级时继续挂载原目录 |
-| `TZ: Asia/Shanghai` | 默认上海时区（UTC+08:00） |
 | `init: true` | 回收检测、解码等子进程 |
+
+默认使用上海时区，**无需在 Compose 中设置 `TZ`**。需要其他时区时，才在 `environment` 中添加，例如 `TZ: Europe/London`。
 
 应用以 **UID/GID 1000:1000** 运行。首次挂载空目录时会设置所需权限；已有目录应允许该用户读写。不要同时启动多个实例访问同一数据库。
 
@@ -65,14 +66,14 @@ docker compose up -d
 docker compose logs --tail=100 -f iptv-studio
 ```
 
-默认用简短中文输出关键结果，时间形如 `2026-11-17 16:30:25.123 +08:00`。后台轮询和逐片信息默认隐藏。持续遇到问题时，在 `environment` 中按需添加：
+默认按“时间 · 类型 · 状态 · 内容”输出简短中文日志：处理进度蓝色、数据结果绿色、策略说明和耗时汇总黄色；整行按内容类型着色，不按成功或失败变色。时间形如 `2026-11-17 16:30:25.123`。后台轮询和逐片信息默认隐藏。持续遇到问题时，在 `environment` 中按需添加：
 
 ```yaml
       IPTV_LOG_LEVEL: DEBUG
       IPTV_LOG_FORMAT: text
 ```
 
-保存后执行 `docker compose up -d` 应用配置。需要结构化诊断时，将 `IPTV_LOG_FORMAT` 改为 `json`；排查完成后恢复 `IPTV_LOG_LEVEL: INFO`。
+保存后执行 `docker compose up -d` 应用配置。需要结构化诊断时，将 `IPTV_LOG_FORMAT` 改为 `json`；排查完成后恢复 `IPTV_LOG_LEVEL: INFO`。终端及容器默认自动按内容类型着色；若查看器不支持颜色，可设 `IPTV_LOG_COLOR: never`，需要强制启用则设 `always`。JSON 日志始终不包含颜色控制字符。
 
 - **打不开管理台：** 检查容器是否运行、端口映射和 NAS 防火墙。
 - **数据目录不可写：** 检查挂载目录是否允许 UID/GID 1000:1000 读写。

@@ -26,7 +26,8 @@ def main():
     c.execute('insert or replace into tests values(?,?)',('http://fixture.invalid/a',service.encode(result)))
     assert list(selected(service.catalog(c),cfg))
    service.edit('settings',{**payload,'probe_mode':mode,'min_speed':100,'min_height':720})
-   with service.db() as c:assert not list(selected(service.catalog(c),service.config(c)))
+   with service.db() as c:
+    assert list(selected(service.catalog(c),service.config(c)))
   service.edit('settings',{**payload,'probe_mode':'pipeline','min_speed':50,'min_height':480})
   def probe(*args):
    assert service.job['probe_policy']==dict(criteria='both',min_speed=50,min_height=480)

@@ -752,7 +752,7 @@ async function showPopup(button){
    const r=hiddenLine||c.lines?.find(line=>line.url===failure);
    if(!r){closePopup();return;}
    $('popupTitle').textContent=(c.label||c.name)+' · 检测结果';
-   const cfg=state.settings,t=r.test,notes=(t.note||[]).filter(Boolean);
+   const cfg=r.detection?.policy||state.settings,t=r.test,notes=(t.note||[]).filter(Boolean);
    let reason=r.assessment==='保留'?'通过':r.assessment;
    if(reason==='速率未达标')reason+=`：${r.speed_display}，要求严格高于 ${cfg.min_speed} KB/s`;
    if(reason==='分辨率未达标')reason+=`：${sizeText(t)}，要求高度至少 ${cfg.min_height} 像素`;

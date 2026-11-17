@@ -105,6 +105,11 @@ jobs:
           docker push "$IMAGE:latest"
           docker buildx imagetools inspect "$IMAGE:latest"
       - name: 同步 Docker Hub 中文项目说明
+        id: hub_description
+        continue-on-error: true
         env:
           HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: python3 scripts/docker_hub.py update
+      - name: 提示 Docker Hub 说明权限不足
+        if: steps.hub_description.outcome == 'failure'
+        run: echo '::warning::镜像与 Release 已发布，但 Docker Hub 说明未同步；请通过仓库管理账号手动保存 docs/dockerhub.md 的部署说明。'
