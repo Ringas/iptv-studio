@@ -13,7 +13,7 @@ assert.equal(format('2026-07-01T12:00:00Z'),'2026-07-01 08:00:00.000');
 assert.equal(format('2026-01-01T12:00:00Z'),'2026-01-01 07:00:00.000');
 context.state.timezone='invalid';assert.equal(format(0),'1970-01-01 08:00:00.000');
 context.state={};assert.equal(format(0),'1970-01-01 08:00:00.000');
-for(const expression of ['formatTime(t.at)','formatTime(r.test.at)','formatTime(cfg.next)','formatTime(s.updated)','formatTime(s.next_update)','formatTime(p.timestamp)'])assert(js.includes(expression),expression);
-// Task log rendering remains deliberately unchanged.
-assert(js.includes('new Date(row.ts*1000).toLocaleString()'));
-console.log('通过：统一界面时间、毫秒、上海默认、跨日、时区覆盖与夏令时、空值；任务日志保留原样');
+for(const expression of ['formatTime(t.at)','formatTime(r.test.at)','formatTime(cfg.next)','formatTime(s.updated)','formatTime(s.next_update)','formatTime(p.timestamp!=null?p.timestamp:p.start)','formatTime(row.ts)'])assert(js.includes(expression),expression);
+// All user-visible timestamps share the same formatter, including task logs.
+assert(!js.includes('toLocaleString('));
+console.log('通过：统一界面时间、毫秒、上海默认、跨日、时区覆盖与夏令时、空值；任务日志时间统一、内容与样式不变');

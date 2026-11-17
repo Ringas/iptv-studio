@@ -9,6 +9,10 @@ on:
         description: 要验证并发布的稳定版本（例如 v1.1.1）
         required: true
         type: string
+      overwrite:
+        description: 验证通过后覆盖同名 Release、标签及镜像（仅明确要求覆盖时启用）
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -39,6 +43,7 @@ jobs:
       - name: 核对版本与发布凭证
         env:
           EVENT_TAG: ${{ inputs.tag }}
+          OVERWRITE: ${{ inputs.overwrite }}
           HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           set -euo pipefail
@@ -47,10 +52,11 @@ jobs:
           [[ -n "$HUB_TOKEN" ]] || { echo '::error::缺少 DOCKERHUB_TOKEN 发布凭证'; exit 1; }
           test -f "docs/release-notes-$tag.md"
           if sha=$(gh api "repos/$GH_REPO/git/ref/tags/$tag" --jq .object.sha 2>/dev/null); then
-            [[ "$sha" == "$(git rev-parse HEAD)" ]] || { echo '::error::版本标签已指向其他提交'; exit 1; }
+            [[ "$sha" == "$(git rev-parse HEAD)" || "$OVERWRITE" == "true" ]] || { echo '::error::版本标签已指向其他提交'; exit 1; }
           fi
           python3 scripts/docker_hub.py check
           echo "TAG=$tag" >> "$GITHUB_ENV"
+          echo "OVERWRITE=${OVERWRITE:-false}" >> "$GITHUB_ENV"
           echo "OUT=$RUNNER_TEMP/iptv-release" >> "$GITHUB_ENV"
       - name: 安装测试用解码器
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
@@ -86,8 +92,11 @@ jobs:
       - name: 发布已验证的 GitHub Release
         run: |
           set -euo pipefail
+          if [[ "$OVERWRITE" == "true" ]]; then
+            gh api --method PATCH "repos/$GH_REPO/git/refs/tags/$TAG" -f "sha=$(git rev-parse HEAD)" -F force=true >/dev/null
+          fi
           if gh release view "$TAG" >/dev/null 2>&1; then
-            [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" == true ]] || { echo '::error::正式版本已发布，不覆盖现有文件'; exit 1; }
+            [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" == true || "$OVERWRITE" == "true" ]] || { echo '::error::正式版本已发布，不覆盖现有文件'; exit 1; }
           else
             gh release create "$TAG" --draft --target "$(git rev-parse HEAD)" --title "频谱 IPTV Studio $TAG" --notes-file "docs/release-notes-$TAG.md"
           fi

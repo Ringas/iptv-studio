@@ -713,7 +713,7 @@ async function programmeList(key){
  let rows;
  try{rows=await guideCache.get(key);}catch(err){guideCache.delete(key);throw err;}
  return rows.length?rows.map(p=>{
-   const time=p.timestamp!=null?formatTime(p.timestamp):p.start;
+   const time=formatTime(p.timestamp!=null?p.timestamp:p.start);
    return `<div class="programme"><time title="${esc(p.start)}">${esc(time)}</time><b>${esc(p.title)}</b></div>`;
  }).join(''):'暂无匹配节目。可在频道详情调整节目单 ID。';
 }
@@ -1254,7 +1254,7 @@ async function loadLogs(version){
  $('clearLogs').disabled=Boolean(legacyLogs)||clearingLogs||!rows.length;
  const open=new Set([...$('logs').querySelectorAll('details[open]')].map(e=>e.dataset.id));
  $('logs').innerHTML=rows.map(row=>{
-   const time=esc(new Date(row.ts*1000).toLocaleString());
+   const time=esc(formatTime(row.ts));
    const failed=['失败','部分失败','未通过','暂时失败','未能验证','待复测'].includes(row.result);
    const reason=failed?`<details data-id="${row.id}" ${open.has(String(row.id))?'open':''}><summary>查看失败原因</summary><p>${esc(diagnosticText(row.reason||row.message))}</p></details>`:'';
    return `<article class="log-entry"><header><b>${esc(row.source||'历史任务')}${row.channel?' · '+esc(row.channel):''}</b><time>${time}</time></header>

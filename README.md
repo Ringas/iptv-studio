@@ -16,7 +16,7 @@ IPTV Studio 是面向 NAS、家庭服务器和本地电脑的 IPTV 管理工具�
 
 项目不提供直播源。README 截图与静态 Demo 均使用虚构频道、模拟检测结果和 `.invalid` 示例地址，不包含家庭订阅或真实媒体。
 
-当前版本：[v1.1.3](https://github.com/Ringas/iptv-studio/releases/tag/v1.1.3) · [中文更新说明](docs/release-notes-v1.1.3.md)
+当前版本：[v1.1.2](https://github.com/Ringas/iptv-studio/releases/tag/v1.1.2) · [中文更新说明](docs/release-notes-v1.1.2.md)
 
 ## 界面预览
 
@@ -172,9 +172,9 @@ DATA_DIR=./data BIND=127.0.0.1 PORT=8788 python3 app.py
 
 ## 运行日志
 
-检测详情、频道详情、订阅更新时间及节目单统一使用 `YYYY-MM-DD HH:mm:ss.SSS`，跟随服务端时区，默认上海；原始检测记录不改写。前台任务记录日志保持原样。
+检测详情、频道详情、订阅更新时间、节目单及任务记录统一使用 `YYYY-MM-DD HH:mm:ss.SSS`，跟随服务端时区，默认上海；原始检测记录不改写。前台任务记录仅统一时间显示，日志内容和样式保持原样。
 
-运行时区默认为上海（`Asia/Shanghai`），无需在 Compose 里设置 TZ；仅在调整时区时覆盖。后台日志统一显示日期、时间与毫秒，不带 `+08:00`；进度、结果、策略与诊断按内容类型整行着色，前台任务记录保持原样。默认以简短中文输出更新、检测和播放的关键结果，异常时给出原因及后续处理提示。轮询和逐片信息默认不刷屏。需要定位持续故障时设置 `IPTV_LOG_LEVEL=DEBUG`；可用 `IPTV_LOG_FORMAT=json` 输出可关联的诊断事件。详见[运行日志与排错](docs/logging.md)。
+运行时区默认为上海（`Asia/Shanghai`），无需在 Compose 里设置 TZ；仅在调整时区时覆盖。后台日志统一显示日期、时间与毫秒，不带 `+08:00`；进度、结果、策略与诊断按内容类型整行着色，前台任务记录仅统一时间显示，内容和样式保持原样。默认以简短中文输出更新、检测和播放的关键结果，异常时给出原因及后续处理提示。轮询和逐片信息默认不刷屏。需要定位持续故障时设置 `IPTV_LOG_LEVEL=DEBUG`；可用 `IPTV_LOG_FORMAT=json` 输出可关联的诊断事件。详见[运行日志与排错](docs/logging.md)。
 
 ## 常见问题
 
