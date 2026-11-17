@@ -56,7 +56,7 @@ def main(image, context):
         assert '频谱已启动' in logs and re.search(r'\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}',logs)
         assert '+08:00' not in logs
         assert '/api/state' not in logs and '/health' not in logs
-        expected = sorted(p.name for p in Path(context).iterdir() if p.name not in ('Dockerfile', 'runtime-prune.py'))
+        expected = sorted(p.name for p in Path(context).iterdir() if p.name not in ('Dockerfile', '.dockerignore', 'runtime-prune.py'))
         actual = json.loads(docker('exec', name, 'python3', '-c', 'import json;from pathlib import Path;print(json.dumps(sorted(p.name for p in Path("/app").iterdir() if p.name!="data")))'))
         assert expected == actual, (expected, actual)
         assert 'LICENSE' in actual and 'hls-LICENSE.txt' in actual
