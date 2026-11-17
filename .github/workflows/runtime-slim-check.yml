@@ -1,0 +1,75 @@
+name: 验证镜像瘦身（不发布）
+on:
+  push:
+    branches: ['audit/runtime-slim-*']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: 准备基线和候选白名单构建目录
+        run: |
+          set -euo pipefail
+          export OUT="$RUNNER_TEMP/runtime-slim-check"
+          mkdir -p "$OUT/baseline"
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+          python3 - <<'PY'
+          import subprocess,os
+          from pathlib import Path
+          base='329df81ce8dbc359ac792f64f19a8d8946aa0a8f'
+          rules=subprocess.check_output(['git','show',base+':.dockerignore']).decode().splitlines()
+          out=Path(os.environ['OUT'])/'baseline'
+          for name in ['.dockerignore',*[r[1:] for r in rules if r.startswith('!')]]:
+              (out/name).write_bytes(subprocess.check_output(['git','show',base+':'+name]))
+          PY
+          python3 scripts/package_release.py v0.0.0 "$OUT/candidate"
+          python3 verify_runtime_prune.py
+      - name: 构建基线与瘦身镜像（不推送）
+        run: |
+          set -euo pipefail
+          docker build --platform linux/amd64 -t iptv-slim-baseline:check "$OUT/baseline" > "$OUT/build-baseline.log" 2>&1
+          docker build --platform linux/amd64 -t iptv-slim-candidate:check "$OUT/candidate/context" > "$OUT/build-candidate.log" 2>&1
+      - name: 验证基线与候选的启动、解码、证书、时区及重启
+        run: |
+          set -euo pipefail
+          python3 scripts/smoke_image.py iptv-slim-baseline:check "$OUT/baseline" | tee "$OUT/smoke-baseline.log"
+          python3 scripts/smoke_image.py iptv-slim-candidate:check "$OUT/candidate/context" | tee "$OUT/smoke-candidate.log"
+      - name: 在瘦身镜像内运行全部隔离回归
+        run: |
+          set -euo pipefail
+          docker run --init --rm --network none --mount "type=bind,source=$GITHUB_WORKSPACE,target=/verify,readonly" --workdir /verify -e PYTHONDONTWRITEBYTECODE=1 iptv-slim-candidate:check python3 scripts/verify_release.py | tee "$OUT/full-regression.log"
+      - name: 记录实际体积差异
+        run: |
+          python3 - <<'PY'
+          import json,os,subprocess
+          from pathlib import Path
+          sizes={}
+          for label,image in [('baseline','iptv-slim-baseline:check'),('candidate','iptv-slim-candidate:check')]:
+              info=json.loads(subprocess.check_output(['docker','image','inspect',image]))[0]
+              code='from pathlib import Path;print(sum(p.stat().st_size for root in ("/usr","/etc","/app") for p in Path(root).rglob("*") if p.is_file() and not p.is_symlink()))'
+              files=int(subprocess.check_output(['docker','run','--rm','--network','none','--read-only','--entrypoint','python3',image,'-c',code]))
+              sizes[label]={'docker_size_bytes':info['Size'],'file_bytes':files}
+          assert sizes['candidate']['file_bytes']<sizes['baseline']['file_bytes'],sizes
+          print(json.dumps(sizes,ensure_ascii=False,indent=2))
+          Path(os.environ['OUT'],'sizes.json').write_text(json.dumps(sizes,indent=2))
+          PY
+      - name: 保存验证日志与体积报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-slim-validation
+          path: |
+            ${{ env.OUT }}/*.log
+            ${{ env.OUT }}/sizes.json
+          retention-days: 14

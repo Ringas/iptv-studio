@@ -46,6 +46,9 @@ def main(image, context):
         docker('exec', name, 'ffmpeg', '-version')
         docker('exec', name, 'ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=size=128x72:rate=3', '-frames:v', '3', '-f', 'null', '-')
         docker('exec', name, 'node', '--version')
+        docker('exec', name, 'node', '-e', 'const t=require("node:tls");if(!t.rootCertificates.length)process.exit(1);if(!Intl.DateTimeFormat("zh-CN",{timeZone:"Asia/Shanghai"}).format(new Date()))process.exit(1)')
+        docker('exec', name, 'python3', '-c', 'import ssl,sqlite3,zlib,bz2,lzma,hashlib,socket,ctypes,zoneinfo;assert ssl.create_default_context().cert_store_stats()["x509_ca"]>0;assert socket.getaddrinfo("localhost",80);assert zoneinfo.ZoneInfo("Europe/London");assert hashlib.sha256(b"fixture").digest()')
+        docker('exec', name, 'sh', '-c', 'id && ls -l /app >/dev/null')
         docker('exec', name, 'python3', '-c', 'import os,datetime;assert os.environ["TZ"]=="Asia/Shanghai";assert datetime.datetime.now().astimezone().utcoffset().total_seconds()==28800')
         docker('exec', name, 'node', '-e', 'if(new Date().getTimezoneOffset()!==-480)process.exit(1)')
         logs=docker('logs', name)
@@ -53,7 +56,7 @@ def main(image, context):
         assert '频谱已启动' in logs and re.search(r'\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}',logs)
         assert '+08:00' not in logs
         assert '/api/state' not in logs and '/health' not in logs
-        expected = sorted(p.name for p in Path(context).iterdir() if p.name != 'Dockerfile')
+        expected = sorted(p.name for p in Path(context).iterdir() if p.name not in ('Dockerfile', 'runtime-prune.py'))
         actual = json.loads(docker('exec', name, 'python3', '-c', 'import json;from pathlib import Path;print(json.dumps(sorted(p.name for p in Path("/app").iterdir() if p.name!="data")))'))
         assert expected == actual, (expected, actual)
         assert 'LICENSE' in actual and 'hls-LICENSE.txt' in actual

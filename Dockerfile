@@ -5,6 +5,7 @@ FROM python:3.13-slim-bookworm AS pack
 COPY --from=node /usr/local/bin/node /tmp/node
 COPY --from=node /usr/local/LICENSE /tmp/node-LICENSE
 RUN python -m pip install --no-cache-dir --only-binary=:all: --no-deps --target=/tmp/media imageio-ffmpeg==0.6.0
+COPY runtime-prune.py /tmp/runtime-prune.py
 # Keep the static decoder isolated from host glibc character-conversion plugins.
 # Mixing the two can crash FFmpeg on DVB metadata in valid MPEG-TS streams.
 RUN set -eu; cd /; mkdir -p runtime; \
@@ -24,6 +25,7 @@ RUN set -eu; cd /; mkdir -p runtime; \
     install -Dm644 /tmp/media/imageio_ffmpeg-*.dist-info/LICENSE /runtime/usr/local/share/doc/ffmpeg/LICENSE; \
     install -m644 /tmp/media/imageio_ffmpeg/binaries/README.md /runtime/usr/local/share/doc/ffmpeg/; \
     install -d -m1777 /runtime/tmp; install -d -o1000 -g1000 /runtime/app/data
+RUN python /tmp/runtime-prune.py /runtime
 FROM scratch
 COPY --from=pack /runtime/ /
 WORKDIR /app

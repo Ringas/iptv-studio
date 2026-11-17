@@ -490,9 +490,6 @@ function setHealth(filter,next=view){
 function actionKeys(){
  return healthFilter?visibleKeys(filtered()).filter(key=>picked.has(key)):Array.from(picked);
 }
-function stateBadge(enabled,title='当前实际发布状态'){
- return `<strong class="publication-badge" data-published="${enabled}" title="${esc(title)}">已${enabled?'启用':'停用'}</strong>`;
-}
 function syncRouteToggle(box,r){
  const button=box.querySelector('[data-policy]');
  const {action,label,title}=routeControl(r);
