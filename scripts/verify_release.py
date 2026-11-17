@@ -12,9 +12,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     node = shutil.which('node')
-    if not node or not shutil.which(os.getenv('FFMPEG_BIN', 'ffmpeg')):
+    decoder = shutil.which(os.getenv('FFMPEG_BIN', 'ffmpeg'))
+    if not node or not decoder:
         raise SystemExit('Node.js and FFmpeg are required')
-    env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'NODE_BIN': node}
+    env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'NODE_BIN': node, 'FFMPEG_BIN': decoder}
     for path in [*ROOT.glob('*.py'), *ROOT.joinpath('scripts').glob('*.py')]:
         ast.parse(path.read_text(), filename=str(path))
     for path in [*ROOT.glob('*.mjs'), ROOT/'ui.js', ROOT/'demo/demo.js']:
