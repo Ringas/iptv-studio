@@ -69,7 +69,7 @@ def first_pass(urls, routes, probe, job, lock, gateway_delay, cool_gateway, dire
                     if job['stop_queue']:break
                     delay=gateway_delay(url,reserve=True)
                     if delay:continue
-                    state={'url':url,'owner':uuid.uuid4().hex,'directory':str(directory),'stop':False,'process':None,'sample':None,'sample_seconds':0,'rechecking':False}
+                    state={'url':url,'owner':uuid.uuid4().hex,'directory':str(directory),'stop':False,'process':None,'sample':None,'sample_seconds':0,'rechecking':False,'channel':' / '.join(routes.get(url,{}).get('channels',[]))}
                     active_states[url]=state
                     job.setdefault('active_lines',{})[url]={'url':url,'sample':None,'sample_seconds':0}
                     job.update(active_url=next(iter(job['active_lines'])),active_channel='双线路检测',message='双线路初测 · '+str(len(results))+'/'+str(len(urls)))

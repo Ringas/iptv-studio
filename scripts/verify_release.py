@@ -14,7 +14,7 @@ def main():
     node = shutil.which('node')
     decoder = shutil.which(os.getenv('FFMPEG_BIN', 'ffmpeg'))
     if not node or not decoder:
-        raise SystemExit('Node.js and FFmpeg are required')
+        raise SystemExit('需要安装 Node.js 和 FFmpeg')
     env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'NODE_BIN': node, 'FFMPEG_BIN': decoder}
     for path in [*ROOT.glob('*.py'), *ROOT.joinpath('scripts').glob('*.py')]:
         ast.parse(path.read_text(), filename=str(path))
@@ -30,13 +30,13 @@ def main():
             except subprocess.TimeoutExpired as error:
                 print((error.stdout or b'').decode(errors='replace'))
                 print((error.stderr or b'').decode(errors='replace'))
-                raise SystemExit(f'TIMEOUT: {path.name}')
+                raise SystemExit(f'超时：{path.name}')
             Path(logs, path.name+'.log').write_bytes(result.stdout+result.stderr)
             if result.returncode:
                 print((result.stdout+result.stderr).decode(errors='replace'))
-                raise SystemExit(f'FAIL: {path.name}')
-            print(f'PASS: {path.name}', flush=True)
-    print(f'All {len(tests)} isolated regression scripts passed.')
+                raise SystemExit(f'失败：{path.name}')
+            print(f'通过：{path.name}', flush=True)
+    print(f'全部 {len(tests)} 项隔离回归通过。')
 
 
 if __name__ == '__main__':

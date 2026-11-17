@@ -1,4 +1,4 @@
-name: Deploy synthetic Pages demo
+name: 部署虚构数据在线演示
 on:
   push:
     branches: [main]

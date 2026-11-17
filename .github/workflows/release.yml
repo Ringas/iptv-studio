@@ -1,4 +1,4 @@
-name: Release and publish image
+name: 验证并发布正式版本
 on:
   push:
     branches: [main]
@@ -6,12 +6,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Stable version to verify and publish (e.g. v1.1.0)
+        description: 要验证并发布的稳定版本（例如 v1.1.1）
         required: true
-        type: string
-      regression_run_id:
-        description: Prior run with passing regressions for identical runtime and tests (optional)
-        required: false
         type: string
 
 permissions:
@@ -26,7 +22,6 @@ jobs:
     timeout-minutes: 35
     permissions:
       contents: write
-      actions: read
     env:
       IMAGE: talktoo/iptv-studio
       GH_TOKEN: ${{ github.token }}
@@ -35,14 +30,13 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Select version and check publishing prerequisites
+      - name: 核对版本与发布凭证
         env:
           EVENT_TAG: ${{ inputs.tag }}
           HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -50,47 +44,29 @@ jobs:
           set -euo pipefail
           tag="${EVENT_TAG:-$(head -n 1 .github/release-version)}"
           [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-          [[ -n "$HUB_TOKEN" ]] || { echo '::error::DOCKERHUB_TOKEN is required'; exit 1; }
+          [[ -n "$HUB_TOKEN" ]] || { echo '::error::缺少 DOCKERHUB_TOKEN 发布凭证'; exit 1; }
           test -f "docs/release-notes-$tag.md"
           if sha=$(gh api "repos/$GH_REPO/git/ref/tags/$tag" --jq .object.sha 2>/dev/null); then
-            [[ "$sha" == "$(git rev-parse HEAD)" ]] || { echo '::error::Version tag already points to another commit'; exit 1; }
+            [[ "$sha" == "$(git rev-parse HEAD)" ]] || { echo '::error::版本标签已指向其他提交'; exit 1; }
           fi
+          python3 scripts/docker_hub.py check
           echo "TAG=$tag" >> "$GITHUB_ENV"
           echo "OUT=$RUNNER_TEMP/iptv-release" >> "$GITHUB_ENV"
-      - name: Install test decoder
+      - name: 安装测试用解码器
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
-      - name: Verify all isolated regressions
+      - name: 验证全部隔离回归
         env:
           PYTHONDONTWRITEBYTECODE: '1'
-          REGRESSION_RUN_ID: ${{ inputs.regression_run_id }}
-        run: |
-          if [[ -z "$REGRESSION_RUN_ID" ]]; then
-            python3 scripts/verify_release.py
-          else
-            python3 - <<'PY'
-          import json, os, subprocess
-          run_id = os.environ['REGRESSION_RUN_ID']
-          assert run_id.isdigit()
-          repo = os.environ['GH_REPO']
-          run = json.loads(subprocess.check_output(['gh', 'api', f'repos/{repo}/actions/runs/{run_id}']))
-          assert run['path'] == '.github/workflows/release.yml'
-          assert run['head_branch'] == 'main' and run['status'] == 'completed'
-          jobs = json.loads(subprocess.check_output(['gh', 'api', f'repos/{repo}/actions/runs/{run_id}/jobs']))['jobs']
-          assert any(step['name'] == 'Verify all isolated regressions' and step['conclusion'] == 'success' for job in jobs for step in job['steps'])
-          changed = set(subprocess.check_output(['git', 'diff', '--name-only', run['head_sha'], 'HEAD'], text=True).splitlines())
-          assert changed <= {'scripts/smoke_image.py', '.github/workflows/release.yml'}, changed
-          print(f"Reuse passing regressions from {run['html_url']}: runtime, tests and test runner are byte-identical; only image smoke/publishing checks changed.")
-          PY
-          fi
-      - name: Pack clean runtime files and build synthetic demo
+        run: python3 scripts/verify_release.py
+      - name: 生成精简运行包与虚构数据演示
         run: |
           python3 scripts/package_release.py "$TAG" "$OUT"
           python3 scripts/build_demo.py
-      - name: Build and verify linux/amd64 image
+      - name: 构建并验证 linux/amd64 镜像
         run: |
           docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" --label "org.opencontainers.image.version=$TAG" --label "org.opencontainers.image.licenses=GPL-3.0-only" -t "$IMAGE:$TAG" "$OUT/context"
           python3 scripts/smoke_image.py "$IMAGE:$TAG" "$OUT/context"
-      - name: Retain verified package
+      - name: 保存已验证的运行包
         uses: actions/upload-artifact@v4
         with:
           name: verified-runtime-${{ env.TAG }}
@@ -98,7 +74,7 @@ jobs:
             ${{ env.OUT }}/iptv-studio-*.zip
             ${{ env.OUT }}/SHA256SUMS
           retention-days: 14
-      - name: Push verified version image
+      - name: 推送已验证的版本镜像
         env:
           HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
@@ -107,17 +83,17 @@ jobs:
           trap 'docker logout >/dev/null' EXIT
           docker push "$IMAGE:$TAG"
           docker buildx imagetools inspect "$IMAGE:$TAG"
-      - name: Publish verified GitHub Release
+      - name: 发布已验证的 GitHub Release
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
-            [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" == true ]] || { echo '::error::Release already published; do not overwrite'; exit 1; }
+            [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" == true ]] || { echo '::error::正式版本已发布，不覆盖现有文件'; exit 1; }
           else
-            gh release create "$TAG" --draft --target "$(git rev-parse HEAD)" --title "IPTV Studio $TAG" --notes-file "docs/release-notes-$TAG.md"
+            gh release create "$TAG" --draft --target "$(git rev-parse HEAD)" --title "频谱 IPTV Studio $TAG" --notes-file "docs/release-notes-$TAG.md"
           fi
           gh release upload "$TAG" "$OUT"/iptv-studio-*.zip "$OUT/SHA256SUMS" --clobber
           gh release edit "$TAG" --draft=false --latest --notes-file "docs/release-notes-$TAG.md"
-      - name: Update Docker Hub latest
+      - name: 更新 Docker Hub latest 标签
         env:
           HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
@@ -128,3 +104,22 @@ jobs:
           docker tag "$IMAGE:$TAG" "$IMAGE:latest"
           docker push "$IMAGE:latest"
           docker buildx imagetools inspect "$IMAGE:latest"
+      - name: 同步 Docker Hub 中文项目说明
+        env:
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: python3 scripts/docker_hub.py update
+      - name: 清理本次替换的旧版 v1.1.0 镜像和发布
+        if: env.TAG == 'v1.1.1'
+        env:
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 scripts/docker_hub.py remove-v1.1.0
+          old=$(gh api "repos/$GH_REPO/releases" --paginate --jq '.[] | select(.tag_name=="v1.1.0") | .id')
+          if [[ -n "$old" ]]; then
+            gh api --method DELETE "repos/$GH_REPO/releases/$old"
+          fi
+          ref=$(gh api "repos/$GH_REPO/git/matching-refs/tags/v1.1.0" --jq '.[] | select(.ref=="refs/tags/v1.1.0") | .ref')
+          if [[ -n "$ref" ]]; then
+            gh api --method DELETE "repos/$GH_REPO/git/refs/tags/v1.1.0"
+          fi

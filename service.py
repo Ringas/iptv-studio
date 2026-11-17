@@ -13,6 +13,7 @@ import threading
 import time
 import uuid
 import tempfile
+from diagnostics import event, exception as diagnostic_exception, task_context, route_id, probe_details, current_task
 from dual_probe import context as probe_context, first_pass, store_cooldown, release_leases, active_states
 from time import monotonic as gateway_clock
 from email.utils import parsedate_to_datetime
@@ -94,9 +95,12 @@ def config(c):
     return cfg
 def save_config(c, cfg): c.execute("update settings set value=?",(encode(cfg),))
 def log(c,text,kind='history',**fields):
+    fields.setdefault('task_id',current_task())
+    level='WARNING' if fields.get('result') in ('失败','部分失败','未通过','暂时失败','未能验证','待复测') else 'INFO'
     c.execute("insert into logs(ts,message,kind,details) values(?,?,?,?)",
               (int(time.time()),str(text)[:1200],kind,encode(fields)))
     c.execute("delete from logs where kind=? and id < (select id from logs where kind=? order by id desc limit 1 offset 249)",(kind,kind))
+    event('record.'+kind,text,level,**fields)
 
 def hours_value(value):
     hours=float(value)
@@ -405,59 +409,77 @@ def probe(url,method,options):
         owner=state['owner'] if state else uuid.uuid4().hex
         gateway_events=[];probe_started=time.monotonic()
         extra={'IPTV_GATEWAY_LEASE_DIR':lease_dir,'IPTV_GATEWAY_OWNER':owner} if lease_dir else {}
-        with subprocess.Popen(args,env={**os.environ,'IPTV_PROBE_OPTIONS':encode(options),'IPTV_PROBE_MANAGED':'1' if method!='legacy' else '0',
-                                      'IPTV_PROBE_RECHECK':'1' if (state['rechecking'] if state else job.get('rechecking')) else '0','IPTV_PROBE_MIN_HEIGHT':str(job.get('probe_policy',DEFAULT)['min_height']) if job.get('pipeline') and job.get('probe_policy',DEFAULT)['criteria'] in ('both','resolution') else '0','IPTV_PROBE_POLICY':encode(job.get('probe_policy',DEFAULT)),**extra},stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,encoding='utf-8') as proc:
+        details=dict(task_id=job.get('run_id'),route_id=route_id(url),url=url,method=method,channel=state.get('channel','') if state else job.get('active_channel',''),attempt='recheck' if (state['rechecking'] if state else job.get('rechecking')) else 'initial')
+        event('probe.started','开始探测线路','DEBUG',**details)
+        last_phase=None
+        killed_by_timeout=threading.Event()
+        with tempfile.TemporaryFile(mode='w+b') as error_output, subprocess.Popen(args,env={**os.environ,'IPTV_PROBE_OPTIONS':encode(options),'IPTV_PROBE_MANAGED':'1' if method!='legacy' else '0',
+                                      'IPTV_PROBE_RECHECK':'1' if (state['rechecking'] if state else job.get('rechecking')) else '0','IPTV_PROBE_MIN_HEIGHT':str(job.get('probe_policy',DEFAULT)['min_height']) if job.get('pipeline') and job.get('probe_policy',DEFAULT)['criteria'] in ('both','resolution') else '0','IPTV_PROBE_POLICY':encode(job.get('probe_policy',DEFAULT)),**extra},stdout=subprocess.PIPE,stderr=error_output,encoding='utf-8') as proc:
             with LOCK:
                 if state:state['process']=proc
                 else:probe_process=proc
                 if (state['stop'] if state else job['stop_line']) or job['stop_queue']:proc.kill()
-            timeout=threading.Timer(120 if method in ('continuous','pipeline') else 60,proc.kill)
+            def expire():
+                killed_by_timeout.set()
+                proc.kill()
+            timeout=threading.Timer(120 if method in ('continuous','pipeline') else 60,expire)
             timeout.start()
             result=None
             try:
                 for line in proc.stdout:
-                    event=json.loads(line)
-                    if event.get('gateway_acquired') and lease_dir:
-                        gateway_events.append({'host':event['host'],'seconds':time.monotonic()-probe_started,'event':'acquired'})
+                    sample_event=json.loads(line)
+                    if sample_event.get('gateway_acquired') and lease_dir:
+                        gateway_events.append({'host':sample_event['host'],'seconds':time.monotonic()-probe_started,'event':'acquired'})
                         continue
-                    if event.get('gateway_limit') and lease_dir:
-                        gateway_events.append({'host':event['host'],'seconds':time.monotonic()-probe_started,'event':'cooldown','retry_after':event['seconds']})
+                    if sample_event.get('gateway_limit') and lease_dir:
+                        gateway_events.append({'host':sample_event['host'],'seconds':time.monotonic()-probe_started,'event':'cooldown','retry_after':sample_event['seconds']})
                         with LOCK:
-                            cool_gateway('https://'+event['host'],event['seconds'])
-                            store_cooldown(lease_dir,event['host'],gateway_delay('https://'+event['host']))
+                            cool_gateway('https://'+sample_event['host'],sample_event['seconds'])
+                            store_cooldown(lease_dir,sample_event['host'],gateway_delay('https://'+sample_event['host']))
                         continue
-                    if event.get('sample'):
+                    if sample_event.get('sample'):
+                        phase=sample_event.get('phase')
+                        if phase and phase!=last_phase:
+                            event('probe.phase','探测阶段变化','DEBUG',**details,phase=phase,seconds=sample_event.get('seconds'))
+                            last_phase=phase
                         with LOCK:
                             target=state if state else job
-                            target.update(sample=event.get('phase') or speed_display(event.get('speed')),sample_seconds=event.get('seconds',0))
+                            target.update(sample=sample_event.get('phase') or speed_display(sample_event.get('speed')),sample_seconds=sample_event.get('seconds',0))
                             if state:
                                 job['active_lines'][url].update(sample=target['sample'],sample_seconds=target['sample_seconds'])
                                 if job.get('active_url')==url:job.update(sample=target['sample'],sample_seconds=target['sample_seconds'])
-                    else: result=event
+                    else: result=sample_event
                 if proc.wait()==0 and result is not None:
                     if lease_dir:
                         if result.get('httpStatus')==429:
-                            for event in gateway_events:
-                                if event['event']=='cooldown':
-                                    address='https://'+event['host']
-                                    extend_gateway(address,max(event['retry_after'],result.get('retryAfter') or 0))
-                                    store_cooldown(lease_dir,event['host'],gateway_delay(address))
+                            for gateway_event in gateway_events:
+                                if gateway_event['event']=='cooldown':
+                                    address='https://'+gateway_event['host']
+                                    extend_gateway(address,max(gateway_event['retry_after'],result.get('retryAfter') or 0))
+                                    store_cooldown(lease_dir,gateway_event['host'],gateway_delay(address))
                         result['gateway_sessions']=gateway_events
+                    event('probe.finished','探测结束','DEBUG',**details,elapsed_ms=round((time.monotonic()-probe_started)*1000),measurement=probe_details(result))
+                    for trace in (result.get('buffer_estimate') or {}).get('trace',[]):event('probe.buffer','缓冲与分片诊断','DEBUG',**details,diagnostic=trace)
                     return result
             finally:
                 timeout.cancel()
                 if proc.poll() is None:proc.kill()
                 proc.wait()
+                error_output.seek(0,2)
+                error_output.seek(max(0,error_output.tell()-4000))
+                stderr_tail=error_output.read(4000).decode('utf-8',errors='replace')
                 if lease_dir:release_leases(lease_dir,owner)
                 with LOCK:
                     if state:state['process']=None
                     else:probe_process=None
-            return {'status':'测速失败','quality':'暂时失败','retryable':True,'note':['测速进程未返回完整结果或已超时']}
+            event('probe.process_error','探测进程未返回完整结果','DEBUG',**details,exit_code=proc.returncode,timed_out=killed_by_timeout.is_set(),elapsed_ms=round((time.monotonic()-probe_started)*1000),stderr_tail=stderr_tail)
+            return {'status':'测速失败','quality':'暂时失败','retryable':True,'note':['检测超过允许时长，未能验证；可稍后重试' if killed_by_timeout.is_set() else '检测组件异常退出，未能验证；持续出现时请开启诊断日志'],'process_error':{'exit_code':proc.returncode,'timed_out':killed_by_timeout.is_set(),'stderr_tail':stderr_tail}}
     except FileNotFoundError: raise RuntimeError('测速需要安装 Node.js 22 或以上')
 
 def progress(message,done,total):
     with LOCK: job.update(message=message,done=done,total=total)
 
+@task_context(job)
 def run(action,requested):
     global dual_lease_dir
     lease_temp=None
@@ -472,7 +494,10 @@ def run(action,requested):
                 query+=' and next_update between 1 and ?'
                 args=(int(time.time()),)
             with db() as c: sources=list(c.execute(query+' order by priority,id',args))
+            event('refresh.batch','开始更新订阅',source_count=len(sources))
             for i,s in enumerate(sources):
+                source_started=time.monotonic()
+                event('refresh.started','开始读取订阅','DEBUG',source=s['name'],source_id=s['id'],source_kind=s['kind'],url=s['url'])
                 progress('更新 '+s['name'],i,len(sources))
                 try:
                     urls,errors=refresh(s,guide_attempts)
@@ -480,13 +505,13 @@ def run(action,requested):
                     failures+=bool(errors)
                     with db() as c:
                         row=c.execute('select last from sources where id=?',(s['id'],)).fetchone()
-                        log(c,row['last'] if row else '更新完成','refresh',source=s['name'],result='部分失败' if errors else '成功',reason='；'.join(errors))
+                        log(c,row['last'] if row else '更新完成','refresh',source=s['name'],result='部分失败' if errors else '成功',reason='；'.join(errors),elapsed_ms=round((time.monotonic()-source_started)*1000),updated_routes=len(urls))
                 except Exception as exc:
                     failures+=1
                     with db() as c:
                         msg='失败，保留旧快照 · '+str(exc)[:250]
                         c.execute('update sources set last=? where id=?',(msg,s['id']))
-                        log(c,'保留旧快照','refresh',source=s['name'],result='失败',reason=str(exc)[:1600])
+                        log(c,'保留旧快照','refresh',source=s['name'],result='失败',reason=str(exc)[:1600],elapsed_ms=round((time.monotonic()-source_started)*1000),error_type=type(exc).__name__,http_status=getattr(exc,'code',None))
                 if action=='scheduled':
                     with LOCK,db() as c:
                         hours=s['interval_hours'] if s['interval_hours'] is not None else config(c)['minutes']/60
@@ -499,10 +524,10 @@ def run(action,requested):
             for ch in channels:
                 # Catalog already excludes disabled sources and hidden content.
                 # Publication state must not prevent unmeasured/failed routes from recovering.
-                for line in ch['lines']:
+                for line_number,line in enumerate(ch['lines'],1):
                     url=line['url']
                     if action=='scheduled' and url not in updated_urls: continue
-                    info=routes.setdefault(url,{'channels':[], 'sources':[],'options':line.get('options',[]),'deep':False})
+                    info=routes.setdefault(url,{'channels':[], 'sources':[],'options':line.get('options',[]),'deep':False,'line':f'线路{line_number}'})
                     previous=line['test']
                     if previous.get('quality')=='可播但不稳' or previous.get('stalls',0)>=2:
                         info['deep']=True
@@ -519,6 +544,7 @@ def run(action,requested):
             limited_once={}
             # Opt-in controlled mode; other detection modes keep their existing scheduler.
             dual=pipeline and cfg['probe_workers']==2
+            event('probe.batch','准备线路检测',mode=cfg['probe_mode'],workers=2 if dual else 1,route_count=len(targets),policy=job['probe_policy'])
             prefetched={}
             if dual:
                 lease_temp=tempfile.TemporaryDirectory(prefix='iptv-gateway-leases-')
@@ -547,6 +573,7 @@ def run(action,requested):
                 try:
                     cached=prefetched.pop(u,None)
                     delay=0 if cached else wait_for(u)
+                    if delay:event('probe.wait','等待网关或复测冷却','DEBUG',route_id=route_id(u),channel=channel,wait_seconds=round(delay,2),attempt='recheck' if u in retries else 'initial')
                     while 0<delay<=30 and not job['stop_line']:
                         with LOCK:job['sample']=f'{"间隔复测" if u in retries else "入口冷却"}，约 {math.ceil(delay)} 秒后测试'
                         time.sleep(min(delay,.25))
@@ -560,6 +587,7 @@ def run(action,requested):
                     else:result=probe(u,method,info.get('options',[]))
                 except Exception as exc: result={'status':'测速失败','quality':'暂时失败','retryable':True,'note':[str(exc)]}
                 is_recheck=bool(job.get('rechecking'))
+                event('probe.attempt','处理线路检测结果','DEBUG',route_id=route_id(u),channel=channel,attempt='recheck' if is_recheck else 'initial',cached=bool(cached),**probe_details(result))
                 result=classify_result(result)
                 if dual and cached and not job['stop_line']:
                     result['dual_initial']=True
@@ -573,7 +601,7 @@ def run(action,requested):
                     result.setdefault('at',time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()))
                     result['evidence']['qualification']={**qualification_policy(cfg),'state':'not_verified','assessment':'未能验证'}
                 with LOCK, db() as c:
-                    fields=dict(channel=channel,source=' / '.join(info['sources']),url=u)
+                    fields=dict(channel=channel,line=info.get('line'),source=' / '.join(info['sources']),url=u,route_id=route_id(u),attempt='recheck' if is_recheck else 'initial',diagnostic=probe_details(result))
                     if job['stop_line']:
                         if job['stop_line']=='已跳过': skipped+=1
                         else: stopped+=1
@@ -584,6 +612,7 @@ def run(action,requested):
                         if not result.get('deferred'):
                             if not result.pop('_entry_cooled',False):cool_gateway(u,result.get('retryAfter'))
                             if u not in retries and gateway_delay(u)<=30:
+                                event('probe.retry_scheduled','限流冷却后复测一次','WARNING',route_id=route_id(u),channel=channel,line=info.get('line'),reason=reason,wait_seconds=round(gateway_delay(u),2),http_status=429)
                                 limited_once[u]=reason
                                 retries[u]=time.monotonic()+gateway_delay(u)
                                 targets.append(targets.pop(i))
@@ -603,6 +632,7 @@ def run(action,requested):
                         if u not in retries and (result.get('retryable') or result.get('isolation_required')):
                             recheck_reasons[u]='；'.join(result.get('note',[]))[:500]
                             retries[u]=(finished if dual and cached else time.monotonic())+(12 if result.get('httpStatus')==607 else 8)
+                            event('probe.retry_scheduled','安排隔离或异常复测','WARNING',route_id=route_id(u),channel=channel,line=info.get('line'),reason=recheck_reasons[u],wait_seconds=round(max(0,retries[u]-time.monotonic()),2),isolation=bool(result.get('isolation_required')))
                             targets.append(u)
                             job['total']=len(targets)
                         uncertain+=1
@@ -639,6 +669,7 @@ def run(action,requested):
                             if u not in retries and (needs_recheck(result,assess(previous,cfg)=='保留') or result.get('isolation_required')):
                                 recheck_reasons[u]='；'.join(result.get('note',[]))[:500]
                                 retries[u]=(finished if dual and cached else time.monotonic())+(12 if result.get('httpStatus')==607 else 8)
+                                event('probe.retry_scheduled','安排隔离或异常复测','WARNING',route_id=route_id(u),channel=channel,line=info.get('line'),reason=recheck_reasons[u],wait_seconds=round(max(0,retries[u]-time.monotonic()),2),isolation=bool(result.get('isolation_required')))
                                 targets.append(u)
                                 job['total']=len(targets)
                                 result.setdefault('note',[]).append('已安排间隔复测，本轮最多复测一次')
@@ -687,7 +718,9 @@ def run(action,requested):
                         c.execute('insert or replace into tests values(?,?)',(u,encode(result)))
                         # Every detection entry uses the same first-pass activation policy.
                         if cfg['strict'] and not is_recheck and assessment in ('保留','速率未达标','分辨率未达标'):
-                            c.execute('delete from route_modes where url=?',(u,))
+                            changed=c.execute('delete from route_modes where url=?',(u,)).rowcount
+                            event('route.activation','有效首测恢复自动启停','DEBUG',route_id=route_id(u),channel=channel,assessment=assessment,cleared_manual=changed)
+                        else:event('route.activation','保留当前启停','DEBUG',route_id=route_id(u),channel=channel,assessment=assessment,reason='异常复测' if is_recheck else '自动启停关闭或结论未明确')
                     job.update(done=i+1,active_url=None,sample=None,revision=job['revision']+1)
                 i+=1
             summary='测速已终止' if job['stop_queue'] else '测速完成'
@@ -703,6 +736,7 @@ def run(action,requested):
         else:
             message=f'更新完成 · {len(sources)} 个订阅 · {failures} 个失败'
     except Exception as exc:
+        diagnostic_exception('task.error','后台任务意外中断',exc)
         message='任务中断 · '+str(exc)
     finally:
         dual_lease_dir=None
@@ -731,11 +765,23 @@ def start(action,url=None,urls=None):
         threading.Thread(target=run,args=(action,urls),daemon=True).start()
 
 def scheduler():
+    last_error=None
+    last_report=0
     while True:
         time.sleep(5)
-        with LOCK,db() as c:
-            if not job['running'] and c.execute('select 1 from sources where enabled and next_update between 1 and ? limit 1',(int(time.time()),)).fetchone():
-                start('scheduled')
+        try:
+            with LOCK,db() as c:
+                if not job['running'] and c.execute('select 1 from sources where enabled and next_update between 1 and ? limit 1',(int(time.time()),)).fetchone():
+                    start('scheduled')
+            if last_error:event('scheduler.recovered','更新计划已恢复运行')
+            last_error=None
+        except Exception as exc:
+            signature=(type(exc).__name__,str(exc))
+            if signature!=last_error or time.monotonic()-last_report>=60:
+                diagnostic_exception('scheduler.error','更新计划暂时无法执行，请检查数据目录权限和运行空间',exc)
+                last_report=time.monotonic()
+            last_error=signature
+
 
 def restore_hidden_routes(c,scope,owner,targets):
     if scope=='route':

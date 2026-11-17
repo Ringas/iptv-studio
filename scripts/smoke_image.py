@@ -1,5 +1,6 @@
 """Verify the release image with a disposable data volume and loopback-only port."""
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -45,6 +46,11 @@ def main(image, context):
         docker('exec', name, 'ffmpeg', '-version')
         docker('exec', name, 'ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=size=128x72:rate=3', '-frames:v', '3', '-f', 'null', '-')
         docker('exec', name, 'node', '--version')
+        docker('exec', name, 'python3', '-c', 'import os,datetime;assert os.environ["TZ"]=="Asia/Shanghai";assert datetime.datetime.now().astimezone().utcoffset().total_seconds()==28800')
+        docker('exec', name, 'node', '-e', 'if(new Date().getTimezoneOffset()!==-480)process.exit(1)')
+        logs=docker('logs', name)
+        assert '频谱已启动' in logs and re.search(r'\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3} \+08:00',logs)
+        assert '/api/state' not in logs and '/health' not in logs
         expected = sorted(p.name for p in Path(context).iterdir() if p.name != 'Dockerfile')
         actual = json.loads(docker('exec', name, 'python3', '-c', 'import json;from pathlib import Path;print(json.dumps(sorted(p.name for p in Path("/app").iterdir() if p.name!="data")))'))
         assert expected == actual, (expected, actual)
@@ -59,7 +65,7 @@ def main(image, context):
         docker('exec', name, 'python3', '-c', 'from pathlib import Path;assert Path("/app/data/restart-check").read_text()=="retained";assert Path("/app/data/hub.sqlite").is_file()')
         assert json.loads(request('/api/state'))['settings'] == settings
         info = json.loads(docker('image', 'inspect', image))[0]
-        print(f'Image smoke checks passed; platform={info["Os"]}/{info["Architecture"]}; size={info["Size"]} bytes')
+        print(f'镜像启动与重启验证通过；平台={info["Os"]}/{info["Architecture"]}；体积={info["Size"]} bytes')
     except Exception:
         subprocess.run(['docker', 'logs', name], check=False)
         raise

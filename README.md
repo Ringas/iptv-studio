@@ -156,6 +156,7 @@ DATA_DIR=./data BIND=127.0.0.1 PORT=8788 python3 app.py
 | `DATA_DIR` | 数据目录，保存 SQLite 数据库等持久内容 |
 | `BIND` | 监听地址，本地调试建议用 `127.0.0.1` 或指定局域网 IP |
 | `PORT` | HTTP 服务端口 |
+| `TZ` | 运行时区，默认 `Asia/Shanghai`（UTC+08:00） |
 | `FFMPEG_BIN` | FFmpeg 可执行文件路径 |
 
 已有本地环境可用 `start-local.command` 固定启动配置。它读取被 Git 忽略的 `.env.local`，其中需设置 `BIND`、`PORT`、`DATA_DIR`、`PYTHON_BIN`、`NODE_BIN`、`FFMPEG_BIN`。路径请填写本机实际绝对路径；该脚本要求原数据库已存在，避免误建空库。
@@ -166,6 +167,10 @@ DATA_DIR=./data BIND=127.0.0.1 PORT=8788 python3 app.py
 ```
 
 直接运行 `app.py` 不会读取 `.env.local`。端口已占用时应先正常停止原进程，不要启动第二个实例。
+
+## 运行日志
+
+运行时区默认为上海（`Asia/Shanghai`），日志带毫秒与时区偏移。默认以简短中文输出更新、检测和播放的关键结果，异常时给出原因及后续处理提示。轮询和逐片信息默认不刷屏。需要定位持续故障时设置 `IPTV_LOG_LEVEL=DEBUG`；可用 `IPTV_LOG_FORMAT=json` 输出可关联的诊断事件。详见[运行日志与排错](docs/logging.md)。
 
 ## 常见问题
 
@@ -191,6 +196,8 @@ node verify_player_focus.cjs
 ```
 
 测试使用隔离数据和本机模拟源；真实线路对照需要固定样本、交替版本，并计入所有重试成本。参见[两段式检测说明](docs/two-stage-detection.md)、[研究记录](research/probe/README.md)和[开发交接](DEVELOPMENT-HANDOFF.md)。
+
+Docker Hub 中文说明由本仓库 README 自动同步，版本标签和 `latest` 仅在回归与容器验证通过后发布。
 
 `python3 scripts/build_demo.py` 生成纯虚构数据的只读 `demo-dist/`，可部署为静态预览。缓存、数据库、日志、本地配置、依赖目录和生成目录不进入版本库；Docker 构建通过白名单仅包含运行所需文件。
 

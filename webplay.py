@@ -1,5 +1,6 @@
 """Short-lived browser playback sessions for catalogued routes."""
 import hashlib
+from diagnostics import event, route_id
 import re
 import secrets
 import threading
@@ -65,6 +66,7 @@ def close_session(key):
         session = sessions.pop(key, None)
         if session:
             session['closed'].set()
+            event('play.finished','本次播放已结束','INFO' if session.get('root') else 'DEBUG',channel=session.get('channel'),line=session.get('line_name'),play_id=route_id(key),route_id=route_id(session['root']) if session.get('root') else None,elapsed_ms=round((time.monotonic()-session['started'])*1000),bytes=session['bytes'],media_requests=session['media_requests'],media_completed=session['media_completed'],failures=session['failures'])
 
 def new_session(line):
     with lock:
@@ -77,7 +79,8 @@ def new_session(line):
         manifest, media = playback_headers(line.get('options', []))
         session = dict(id=key, resources=OrderedDict(), manifest=manifest, media=media,
                        opener=build_opener(ProxyHandler({}), HTTPCookieProcessor(CookieJar())),
-                       closed=threading.Event(), touched=time.monotonic())
+                       closed=threading.Event(), touched=time.monotonic(),started=time.monotonic(),channel=line.get('channel',''),line_name=line.get('line_name',''),
+                       bytes=0,media_requests=0,media_completed=0,failures=0,last_error_log=0)
         sessions[key] = session
     try:
         address = resource(session, line['url'], True)
@@ -95,8 +98,10 @@ def new_session(line):
                 raise ValueError('该线路返回的格式暂不支持网页播放，支持 HLS、MP4 和 WebM')
         session['root'] = line['url']
         if kind == 'native': address = resource(session, line['url'])
+        event('play.started','开始网页播放',channel=session['channel'],line=session.get('line_name'),play_id=route_id(key),route_id=route_id(line['url']),format=kind)
         return dict(session=key, url=address, kind=kind)
-    except Exception:
+    except Exception as error:
+        event('play.failed','暂时无法播放这条线路','WARNING',channel=session['channel'],line=session.get('line_name'),route_id=route_id(line['url']),reason=upstream_error(error),error_type=type(error).__name__,http_status=getattr(error,'code',None),tip='可稍后重试，或切换其他线路；此错误不自动改变线路启停')
         close_session(key)
         raise
 
@@ -126,6 +131,9 @@ def serve(handler, query):
         if not re.fullmatch(r'bytes=(?:\d+-\d*|-\d+)', span):
             handler.send(416, '无效字节范围', 'text/plain'); return
         headers['Range'] = span
+    started=time.monotonic()
+    if not manifest:
+        with lock:session['media_requests']+=1
     with session['opener'].open(Request(address, headers=headers), timeout=12) as upstream:
         mime = upstream.headers.get_content_type()
         prefix = upstream.read(1024)
@@ -133,6 +141,7 @@ def serve(handler, query):
             body = prefix+upstream.read(2*1024*1024)
             if len(body) > 2*1024*1024: raise ValueError('直播清单过大')
             handler.send(200, rewrite(session, body.decode('utf-8-sig'), upstream.url), 'application/vnd.apple.mpegurl')
+            event('play.manifest','播放清单已刷新','DEBUG',channel=session['channel'],line=session.get('line_name'),play_id=route_id(key),elapsed_ms=round((time.monotonic()-started)*1000),segments=body.count(b'#EXTINF:'),http_status=upstream.status)
             return
         if mime in ('text/html', 'application/json'):
             raise ValueError('上游返回了错误页面，请重新播放或更换线路')
@@ -146,13 +155,25 @@ def serve(handler, query):
         handler.end_headers()
         handler.close_connection = True
         try:
+            sent=0
             block = prefix
             while block and not session['closed'].is_set():
                 handler.wfile.write(block)
+                with lock:session['bytes']+=len(block)
+                sent+=len(block)
                 if session['closed'].is_set(): break
                 block = upstream.read1(64*1024)
-        except (OSError, HTTPException):
-            # Headers may already have been sent. Closing signals a truncated resource.
+            if not block:
+                expected=upstream.headers.get('Content-Length')
+                if expected is None or (expected.isdigit() and sent==int(expected)):
+                    with lock:session['media_completed']+=1
+                else:record_error(query,ValueError('媒体传输提前结束，可重试或切换线路'))
+        except (BrokenPipeError,ConnectionResetError):
+            event('play.client_closed','播放器已断开本次媒体请求','DEBUG',channel=session['channel'],line=session.get('line_name'),play_id=route_id(key))
+            return
+        except (OSError, HTTPException) as error:
+            # Headers were sent: do not append an error page to an incomplete segment.
+            record_error(query,error)
             return
 
 def upstream_error(error):
@@ -169,6 +190,10 @@ def record_error(query, error):
         session = sessions.get(query.get('session', [''])[0])
         if session:
             session['error'] = upstream_error(error)
+            session['failures']+=1
+            if time.monotonic()-session['last_error_log']>=10 or session['failures']==1:
+                session['last_error_log']=time.monotonic()
+                event('play.upstream_error','播放传输暂时失败','WARNING',channel=session.get('channel'),line=session.get('line_name'),play_id=route_id(session['id']),route_id=route_id(session['root']),reason=session['error'],http_status=getattr(error,'code',None),failures=session['failures'],tip='可等待播放器重试，或切换其他线路；这不代表线路永久失效')
 
 def last_error(key):
     with lock:

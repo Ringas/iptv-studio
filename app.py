@@ -16,6 +16,7 @@ from service import ROOT,DATA,LOCK,job,init,db,config,catalog,epg,selected,edit,
 from catalog import export,xmltv_stamp
 from catalog import xmlroot
 import webplay
+from diagnostics import bind, event, exception as diagnostic_exception
 
 HOST=os.getenv('BIND','127.0.0.1')
 PORT=int(os.getenv('PORT','8788'))
@@ -37,6 +38,21 @@ def lan_address(value):
     return ip.is_loopback or any(ip in network for network in LAN_RANGES)
 
 class Handler(BaseHTTPRequestHandler):
+    def handle_one_request(self):
+        self.request_started=time.monotonic()
+        with bind(request_id=secrets.token_hex(4)):
+            return super().handle_one_request()
+
+    def log_request(self,code='-',size='-'):
+        path=urlsplit(getattr(self,'path','')).path
+        known=path if path in ('/health','/api/status','/api/state','/api/logs','/api/play','/api/play-media','/api/play-status','/api/job','/api/stop-probe') else '/其他请求'
+        level='WARNING' if isinstance(code,int) and code>=400 and path not in ('/api/play','/api/play-media') else 'DEBUG'
+        event('http.response',f'网页请求返回 HTTP {code}',level,method=getattr(self,'command',''),path=known,http_status=code,elapsed_ms=round((time.monotonic()-getattr(self,'request_started',time.monotonic()))*1000),tip='请检查访问权限或操作地址；持续失败时查看诊断日志' if level=='WARNING' else '')
+
+    def log_message(self,*args):
+        # BaseHTTPRequestHandler otherwise prints raw query strings and every poll.
+        pass
+
     def send(self,code,body,ctype,filename=None):
         if isinstance(body,str): body=body.encode()
         self.send_response(code)
@@ -184,7 +200,9 @@ class Handler(BaseHTTPRequestHandler):
                     self.send(404,'没有此页面','text/plain');return
             self.send(200,json.dumps(res,ensure_ascii=False),'application/json')
         except (BrokenPipeError,ConnectionResetError): pass
-        except Exception as exc: self.send(500,str(exc),'text/plain')
+        except Exception as exc:
+            diagnostic_exception('http.error','处理网页请求时发生内部错误',exc)
+            self.send(500,'服务内部错误，请查看同一时间的运行日志','text/plain')
 
     def do_POST(self):
         try:
@@ -199,9 +217,9 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(payload,dict): raise ValueError('无效请求')
             if self.path=='/api/play':
                 with db() as c:
-                    line=next((r for ch in catalog(c) if ch['name']==payload.get('name') for r in ch['lines'] if r['url']==payload.get('url')),None)
+                    line=next(({**r,'line_name':f'线路{index}'} for ch in catalog(c) if ch['name']==payload.get('name') for index,r in enumerate(ch['lines'],1) if r['url']==payload.get('url')),None)
                 if line is None: raise ValueError('没有此频道线路，请刷新频道目录')
-                try: result=webplay.new_session(line)
+                try: result=webplay.new_session({**line,'channel':payload.get('name','')})
                 except Exception as exc:
                     self.send(502,webplay.upstream_error(exc),'text/plain');return
                 self.send(200,json.dumps(result),'application/json');return
@@ -232,6 +250,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(404,'未知操作','text/plain');return
             self.send(200,'{"ok":true}','application/json')
         except (ValueError,KeyError,TypeError) as exc: self.send(400,str(exc),'text/plain')
+        except (BrokenPipeError,ConnectionResetError): pass
+        except Exception as exc:
+            diagnostic_exception('http.error','处理操作时发生内部错误',exc)
+            self.send(500,'服务内部错误，请查看同一时间的运行日志','text/plain')
 
 if __name__=='__main__':
     init()
@@ -240,9 +262,9 @@ if __name__=='__main__':
         if not key.exists(): key.write_text(secrets.token_urlsafe(20),encoding='utf-8')
         PASSWORD=key.read_text(encoding='utf-8').strip()
         if not PASSWORD: raise ValueError('管理员密码为空')
-        print('管理员 admin 的密码保存在 '+str(key),flush=True)
+        event('server.password','已生成管理员密码文件，请在本机数据目录查看')
     server=ThreadingHTTPServer((HOST,PORT),Handler)
     if os.getenv('STUDIO_PREVIEW')!='1':
         threading.Thread(target=scheduler,daemon=True).start()
-    print(f'IPTV Hub · http://{HOST}:{PORT}',flush=True)
+    event('server.started',f'频谱已启动，访问 http://{HOST}:{PORT}',listen=f'http://{HOST}:{PORT}',scheduler=os.getenv('STUDIO_PREVIEW')!='1',log_level=os.getenv('IPTV_LOG_LEVEL','INFO'),log_format=os.getenv('IPTV_LOG_FORMAT','text'))
     server.serve_forever()

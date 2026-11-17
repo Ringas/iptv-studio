@@ -50,7 +50,7 @@ export function decodeFrames(buffer,continuous=false){
     const ff=spawn(process.env.FFMPEG_BIN||'ffmpeg',['-hide_banner','-loglevel','info','-nostdin','-protocol_whitelist','pipe',
       '-threads','1','-i','pipe:0','-map','0:v:0','-frames:v',continuous?'6':'1','-an','-vf','showinfo','-f','null','-'],
       {windowsHide:true,stdio:['pipe','ignore','pipe']});
-    let pending='',size;
+    let pending='',size,stderrTail='';
     const frames=[];
     function parseLine(line){
       const match=line.match(/Parsed_showinfo[^\n]*\bn:\s*(\d+)[^\n]*\bpts_time:([^\s]+)[^\n]*\bs:(\d+)x(\d+)/);
@@ -63,6 +63,7 @@ export function decodeFrames(buffer,continuous=false){
     ff.on('error',()=>{clearTimeout(timeout);reject(unverified('无法运行 FFmpeg 首帧解码器'));});
     ff.stdin.on('error',()=>{});
     ff.stderr.on('data',data=>{
+      stderrTail=(stderrTail+data.toString()).slice(-4000);
       pending+=data.toString();
       const lines=pending.split('\n');pending=lines.pop();
       for(const line of lines)parseLine(line);
@@ -77,7 +78,7 @@ export function decodeFrames(buffer,continuous=false){
         resolve({resolution:size,frames:frames.length,pts:timestamps,pts_advanced:advancing});
       }else{
         const error=unverified(continuous?'精测未取得至少 3 帧及严格推进的有效时间戳':'在抽样媒体中未解出视频帧');
-        error.decodeEvidence={state:'not_verified',frames:frames.length,pts:timestamps.map(p=>Number.isFinite(p)?p:null),pts_advanced:advancing};
+        error.decodeEvidence={state:'not_verified',exit_code:code,stderr_tail:stderrTail,frames:frames.length,pts:timestamps.map(p=>Number.isFinite(p)?p:null),pts_advanced:advancing};
         reject(error);
       }
     });
