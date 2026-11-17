@@ -59,7 +59,7 @@ function applyHelp(root=document){
   ['[data-address],[data-hidden-address]','展开完整直播地址，可选中复制。'],
   ['[data-guide]','查看此频道已匹配的节目单。'],
   ['.feed-guides summary','查看直播清单内附带的节目单地址，更新订阅时会一并获取。'],
-  ['.export-list a[href="/live.m3u"],.subscribe','打开 M3U 文本；把同一地址填入播放器即可订阅。'],
+  ['.export-list a[href="/live.m3u"]','打开 M3U 文本；把同一地址填入播放器即可订阅。'],
   ['.export-list a[href="/live.txt"]','以 TXT 格式发布频道及多条线路。'],
   ['.export-list a[href="/live.json"]','查看结构化频道和线路数据，供其他工具读取。'],
   ['.export-list a[href="/guide.xml"]','打开 XMLTV 节目单，供播放器匹配节目。']
@@ -1354,6 +1354,24 @@ $('schedule').onsubmit=safely(async e=>{
    if(!settingsDirty)$('saveStatus').textContent='设置已保存';
  }finally{button.disabled=false;}
 });
+function setupSubscriptionShare(){
+ const button=$('copySubscription');
+ const url=new URL(button.dataset.path,location.href).href;
+ button.title='复制 M3U 订阅地址：'+url;
+ button.onclick=safely(async()=>{
+  let copied=false;
+  try{await navigator.clipboard.writeText(url);copied=true;}catch{}
+  if(!copied){
+   const field=document.createElement('textarea');field.value=url;field.readOnly=true;
+   field.style.cssText='position:fixed;left:-9999px;top:0;font-size:16px';
+   document.body.append(field);
+   try{field.select();field.setSelectionRange(0,url.length);copied=document.execCommand('copy');}
+   catch{}finally{field.remove();button.focus({preventScroll:true});}
+  }
+  notice(copied?'订阅地址已复制':'复制未完成，可在设置与订阅中长按 M3U 清单复制链接');
+ });
+}
+setupSubscriptionShare();
 document.querySelector('[data-tab="channels"]').classList.add('active');
 async function poll(){
  try{await status();}catch(e){notice(e.message);}

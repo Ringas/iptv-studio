@@ -12,7 +12,7 @@
 <main id="workspace" tabindex="-1">
 <div class="workspace-bar"><span>工作区 <i>/</i> <strong id="pageLabel">频道库</strong></span><div class="task-actions"><div id="task" role="status"><span id="taskMessage">正在读取工作区…</span><span id="taskChannels"></span><span id="taskProgress"></span></div><button type="button" data-stop-current hidden title="跳过当前线路，保留上次检测结果，继续检测下一条。">跳过此线路</button><button type="button" data-stop-all hidden title="停止当前检测和余下队列，保留已经完成的结果。">终止整批</button></div></div>
 <section id="channels" class="studio-shell">
-  <div class="page-heading"><div><h1>频道库</h1><span id="librarySummary"></span></div><a class="subscribe" href="/live.m3u" target="_blank" rel="noopener">M3U 订阅 ↗</a></div>
+  <div class="page-heading"><div><h1>频道库</h1><span id="librarySummary"></span></div><button id="copySubscription" class="subscribe" aria-label="复制 M3U 订阅地址" type="button" data-path="./live.m3u"><span>M3U 订阅</span><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M12 4V3a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h1"/></svg></button></div>
   <div class="catalog-tools" id="catalogTools"><div class="control-deck">
     <div class="find-row"><label class="search-box"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg><input id="query" type="search" placeholder="搜索频道、直播平台或线路地址" aria-label="搜索频道、直播平台或线路地址"></label>
     <select id="group" aria-label="筛选分组"><option value="">全部分组</option></select>

@@ -16,11 +16,11 @@ IPTV Studio 是面向 NAS、家庭服务器和本地电脑的 IPTV 管理工具�
 
 项目不提供直播源。README 截图与静态 Demo 均使用虚构频道、模拟检测结果和 `.invalid` 示例地址，不包含家庭订阅或真实媒体。
 
-当前版本：[v1.1.2](https://github.com/Ringas/iptv-studio/releases/tag/v1.1.2) · [中文更新说明](docs/release-notes-v1.1.2.md)
+当前版本：[v1.1.3](https://github.com/Ringas/iptv-studio/releases/tag/v1.1.3) · [中文更新说明](docs/release-notes-v1.1.3.md)
 
 ## 界面预览
 
-**频道库**：每个色点代表一条线路的启停状态；首选速率对应默认播放的线路，没有达标首选时显示“暂无可用”。
+**频道库**：每个色点代表一条线路的启停状态；首选速率对应默认播放的线路，没有达标首选时显示“暂无可用”。右上角“M3U 订阅”可直接复制播放器订阅地址。
 
 ![频道卡片与首选速率](docs/screenshots/library.jpg)
 
