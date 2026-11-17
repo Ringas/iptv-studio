@@ -26,6 +26,7 @@ jobs:
     timeout-minutes: 35
     permissions:
       contents: write
+      actions: read
     env:
       IMAGE: talktoo/iptv-studio
       GH_TOKEN: ${{ github.token }}
