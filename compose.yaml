@@ -1,9 +1,12 @@
-name: iptv-studio
 services:
   iptv-studio:
     image: talktoo/iptv-studio:latest
-    restart: unless-stopped
+    container_name: iptv-studio
+    init: true
     ports:
-      - "8788:8787"
+      - "8787:8787"
+    environment:
+      PORT: "8787"
     volumes:
       - ./data:/app/data
+    restart: always

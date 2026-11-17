@@ -1,14 +1,12 @@
 name: Release and publish image
 on:
-  release:
-    types: [published]
   push:
     branches: [main]
     paths: ['.github/release-version']
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing stable release tag (e.g. v1.0.0)
+        description: Stable version to verify and publish (e.g. v1.1.0)
         required: true
         type: string
 
@@ -21,65 +19,87 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     permissions:
       contents: write
     env:
       IMAGE: talktoo/iptv-studio
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag || github.sha }}
           persist-credentials: false
-      - name: Select and validate release
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Select version and check publishing prerequisites
         env:
-          EVENT_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          EVENT_TAG: ${{ inputs.tag }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
+          set -euo pipefail
           tag="${EVENT_TAG:-$(head -n 1 .github/release-version)}"
           [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ -n "$HUB_TOKEN" ]] || { echo '::error::DOCKERHUB_TOKEN is required'; exit 1; }
+          test -f "docs/release-notes-$tag.md"
+          if sha=$(gh api "repos/$GH_REPO/git/ref/tags/$tag" --jq .object.sha 2>/dev/null); then
+            [[ "$sha" == "$(git rev-parse HEAD)" ]] || { echo '::error::Version tag already points to another commit'; exit 1; }
+          fi
           echo "TAG=$tag" >> "$GITHUB_ENV"
           echo "OUT=$RUNNER_TEMP/iptv-release" >> "$GITHUB_ENV"
-      - name: Pack clean runtime files
-        run: python3 scripts/package_release.py "$TAG" "$OUT"
+      - name: Install test decoder
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Verify all isolated regressions
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 scripts/verify_release.py
+      - name: Pack clean runtime files and build synthetic demo
+        run: |
+          python3 scripts/package_release.py "$TAG" "$OUT"
+          python3 scripts/build_demo.py
       - name: Build and verify linux/amd64 image
         run: |
-          docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" -t "$IMAGE:$TAG" "$OUT/context"
-          docker run -d --name iptv-check -p 127.0.0.1:18787:8787 "$IMAGE:$TAG"
-          trap 'rc=$?; if [ "$rc" -ne 0 ]; then docker logs iptv-check; fi; docker rm -fv iptv-check >/dev/null' EXIT
-          curl -fsS --retry 12 --retry-all-errors --retry-delay 2 http://127.0.0.1:18787/health
-          curl -fsS http://127.0.0.1:18787/api/state | python3 -c 'import json,sys; assert json.load(sys.stdin)["sources"] == []'
-          curl -fsS http://127.0.0.1:18787/live.m3u | grep -q '^#EXTM3U'
-          docker exec iptv-check ffmpeg -version >/dev/null
-          docker exec iptv-check node --version
-          export LC_ALL=C
-          diff -u <(find "$OUT/context" -maxdepth 1 -type f ! -name Dockerfile -printf '%f\n' | sort) <(docker exec iptv-check python3 -c 'from pathlib import Path;print("\n".join(sorted(p.name for p in Path("/app").iterdir() if p.name != "data")))')
-      - name: Publish GitHub Release and verified assets
-        env:
-          GH_REPO: ${{ github.repository }}
-        run: |
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            [[ "$GITHUB_EVENT_NAME" == push ]]
-            if sha=$(gh api "repos/$GH_REPO/git/ref/tags/$TAG" --jq .object.sha 2>/dev/null); then
-              [[ "$sha" == "$(git rev-parse HEAD)" ]]
-            fi
-            gh release create "$TAG" "$OUT"/iptv-studio-*.zip "$OUT/SHA256SUMS" --target "$(git rev-parse HEAD)" --title "IPTV Studio $TAG" --notes "IPTV 频道、订阅与节目单管理。下载精简运行包并解压，在目录内执行 docker compose up -d。镜像由本次 Actions 工作流构建与推送。"
-          else
-            gh release upload "$TAG" "$OUT"/iptv-studio-*.zip "$OUT/SHA256SUMS" --clobber
-          fi
-      - name: Push verified image to Docker Hub
+          docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" --label "org.opencontainers.image.version=$TAG" --label "org.opencontainers.image.licenses=GPL-3.0-only" -t "$IMAGE:$TAG" "$OUT/context"
+          python3 scripts/smoke_image.py "$IMAGE:$TAG" "$OUT/context"
+      - name: Retain verified package
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-runtime-${{ env.TAG }}
+          path: |
+            ${{ env.OUT }}/iptv-studio-*.zip
+            ${{ env.OUT }}/SHA256SUMS
+          retention-days: 14
+      - name: Push verified version image
         env:
           HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
-          if [[ -z "$HUB_TOKEN" ]]; then
-            echo "::error::Set the DOCKERHUB_TOKEN Actions secret for talktoo/iptv-studio, then rerun this workflow."
-            exit 1
-          fi
+          set -euo pipefail
           printf '%s' "$HUB_TOKEN" | docker login -u talktoo --password-stdin
           trap 'docker logout >/dev/null' EXIT
           docker push "$IMAGE:$TAG"
-          latest=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
-          if [[ "$latest" == "$TAG" ]]; then
-            docker tag "$IMAGE:$TAG" "$IMAGE:latest"
-            docker push "$IMAGE:latest"
-          fi
           docker buildx imagetools inspect "$IMAGE:$TAG"
+      - name: Publish verified GitHub Release
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" == true ]] || { echo '::error::Release already published; do not overwrite'; exit 1; }
+          else
+            gh release create "$TAG" --draft --target "$(git rev-parse HEAD)" --title "IPTV Studio $TAG" --notes-file "docs/release-notes-$TAG.md"
+          fi
+          gh release upload "$TAG" "$OUT"/iptv-studio-*.zip "$OUT/SHA256SUMS" --clobber
+          gh release edit "$TAG" --draft=false --latest --notes-file "docs/release-notes-$TAG.md"
+      - name: Update Docker Hub latest
+        env:
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$(gh release view --json tagName --jq .tagName)" == "$TAG" ]]
+          printf '%s' "$HUB_TOKEN" | docker login -u talktoo --password-stdin
+          trap 'docker logout >/dev/null' EXIT
+          docker tag "$IMAGE:$TAG" "$IMAGE:latest"
+          docker push "$IMAGE:latest"
+          docker buildx imagetools inspect "$IMAGE:latest"

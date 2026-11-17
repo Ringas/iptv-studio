@@ -19,6 +19,8 @@ def package(tag, destination):
     if rules[0] != "*" or any(not re.fullmatch(r"![A-Za-z0-9_.-]+", r) for r in rules[1:]):
         raise ValueError("Expected an explicit allowlist in .dockerignore")
     allowed = sorted(r[1:] for r in rules[1:])
+    if len(allowed) != len(set(allowed)) or not {'LICENSE', 'hls-LICENSE.txt', 'dual_probe.py', 'gateway-lease.mjs'} <= set(allowed):
+        raise ValueError('Runtime allowlist must include required modules and licenses')
     for name in allowed:
         if name.startswith((".", "verify", "test")) or name.endswith((".sqlite", ".db", ".log", ".m3u")):
             raise ValueError(f"Unexpected runtime file: {name}")
@@ -37,7 +39,7 @@ def package(tag, destination):
         if compose.count(image) != 1:
             raise ValueError("Check the published image in compose.yaml")
         add("compose.yaml", compose.replace(image, f"talktoo/iptv-studio:{tag}").encode())
-        add("README.md", f"# IPTV Studio {tag}\n\n在解压目录执行 `docker compose up -d`，然后打开 http://服务器局域网IP:8788 。订阅和设置保存在 ./data。升级请沿用原数据卷。\n".encode())
+        add("README.md", f"# IPTV Studio {tag}\n\n在解压目录执行 `docker compose up -d`，然后打开 http://服务器局域网IP:8787 。订阅和设置保存在 ./data。升级前停止服务并备份整个数据目录；请沿用原数据卷，不要同时启动两个实例。本包包含运行源码、固定版本 Compose、构建文件及许可文件，不含家庭数据、缓存、测试和研究材料。源码运行需要 Python 3.10+、Node.js 22+、FFmpeg；界面与操作说明见 https://github.com/Ringas/iptv-studio 。\n".encode())
     with zipfile.ZipFile(zip_path) as archive:
         assert archive.testzip() is None
         assert sorted(archive.namelist()) == sorted(allowed + [".dockerignore", "compose.yaml", "README.md"])

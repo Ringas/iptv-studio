@@ -6,7 +6,7 @@
 
 自托管 · 多线路择优 · 直播检测 · 节目单 · NAS 部署
 
-[界面预览](#界面预览) · [快速部署](#快速部署) · [检测与启停](#检测与启停) · [本地运行](#本地运行)
+[在线 Demo](https://ringas.github.io/iptv-studio/) · [界面预览](#界面预览) · [快速部署](#快速部署) · [检测与启停](#检测与启停) · [本地运行](#本地运行)
 
 [发行版](https://github.com/Ringas/iptv-studio/releases) · [Docker Hub](https://hub.docker.com/r/talktoo/iptv-studio)
 
@@ -74,7 +74,7 @@ docker compose pull
 docker compose up -d
 ```
 
-打开 `http://服务器IP:8788`。数据保存在当前目录的 `./data`，容器重建后继续使用此目录。
+打开 `http://服务器IP:8787`。Compose 使用 `init: true` 回收子进程，容器内监听 `PORT=8787`；`mport` 不是本项目支持的配置。数据保存在当前目录的 `./data`，容器重建后继续使用此目录。
 
 默认 Compose 使用已发布的 `talktoo/iptv-studio:latest` 镜像。**GitHub main 的代码更新不等于镜像已更新**。需要使用当前源码时，在仓库目录自行构建：
 
@@ -83,7 +83,7 @@ git clone https://github.com/Ringas/iptv-studio.git
 cd iptv-studio
 docker build -t iptv-studio:local .
 docker run -d --name iptv-studio-local --restart unless-stopped \
-  -p 8788:8787 -v "$(pwd)/data:/app/data" iptv-studio:local
+  --init -p 8787:8787 -v "$(pwd)/data:/app/data" iptv-studio:local
 ```
 
 已有服务时先停止旧实例，避免两个进程共用数据库或端口。升级前停止服务并备份整个数据目录；升级镜像可使用 `docker compose pull && docker compose up -d`。不要删除数据目录，也不要用空目录替换原挂载目录。
@@ -179,7 +179,7 @@ DATA_DIR=./data BIND=127.0.0.1 PORT=8788 python3 app.py
 
 ## 开发与验证
 
-运行根目录的 `verify*.py`、`verify*.mjs` 和独立前端检查。`verify_route_consistency.cjs` 由对应 Python 测试传入数据调用，不单独执行。
+运行 `python3 scripts/verify_release.py` 可统一执行语法检查与全部隔离回归，也可运行根目录的 `verify*.py`、`verify*.mjs` 和独立前端检查。`verify_route_consistency.cjs` 由对应 Python 测试传入数据调用，不单独执行。
 
 ```bash
 python3 verify.py
