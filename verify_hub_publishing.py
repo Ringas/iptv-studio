@@ -7,8 +7,12 @@ from scripts import docker_hub as hub
 
 text=hub.description()
 assert len(hub.SHORT_DESCRIPTION.encode('utf-8'))<=100
-assert 'v1.1.1' in text and 'linux/amd64' in text and 'IPTV_LOG_LEVEL' in text
-assert '(docs/' not in text and 'https://raw.githubusercontent.com/Ringas/iptv-studio/main/docs/screenshots/library.jpg' in text
+assert Path('.github/release-version').read_text().splitlines()[0] in text and 'linux/amd64' in text and 'IPTV_LOG_LEVEL' in text
+assert Path('compose.yaml').read_text().strip() in text
+assert '{{VERSION}}' not in text and '{{COMPOSE}}' not in text
+assert 'docker compose logs --tail=100 -f iptv-studio' in text
+assert 'docs/screenshots' not in text and 'verify_primary_route.py' not in text and 'git clone' not in text
+
 calls=[]
 def fake(method,path,token=None,data=None,missing_ok=False):
     calls.append((method,path,data))

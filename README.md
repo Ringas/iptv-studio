@@ -197,7 +197,7 @@ node verify_player_focus.cjs
 
 测试使用隔离数据和本机模拟源；真实线路对照需要固定样本、交替版本，并计入所有重试成本。参见[两段式检测说明](docs/two-stage-detection.md)、[研究记录](research/probe/README.md)和[开发交接](DEVELOPMENT-HANDOFF.md)。
 
-Docker Hub 中文说明由本仓库 README 自动同步，版本标签和 `latest` 仅在回归与容器验证通过后发布。
+Docker Hub 使用独立的[部署说明](docs/dockerhub.md)，同步时自动填入当前版本和 Compose 配置；版本标签和 `latest` 仅在回归与容器验证通过后发布。
 
 `python3 scripts/build_demo.py` 生成纯虚构数据的只读 `demo-dist/`，可部署为静态预览。缓存、数据库、日志、本地配置、依赖目录和生成目录不进入版本库；Docker 构建通过白名单仅包含运行所需文件。
 

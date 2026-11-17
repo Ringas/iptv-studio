@@ -39,16 +39,16 @@ def authenticate():
 
 
 def description():
-    # README is the single source: absolute links work in Docker Hub too.
-    readme = (ROOT/'README.md').read_text()
-    def absolute(match):
-        prefix, label, target = match.groups()
-        if target.startswith(('https://', 'http://', '#')): return match[0]
-        base = 'https://raw.githubusercontent.com/Ringas/iptv-studio/main/' if prefix else 'https://github.com/Ringas/iptv-studio/blob/main/'
-        return f'{prefix}[{label}]({base}{target})'
-    readme = re.sub(r'(!?)\[([^\]]*)\]\(([^)]+)\)', absolute, readme)
+    # Docker Hub has its own deployment guide; never copy the GitHub README.
+    template = (ROOT/'docs/dockerhub.md').read_text()
     tag = (ROOT/'.github/release-version').read_text().splitlines()[0]
-    return f'当前稳定镜像：`talktoo/iptv-studio:{tag}`，同步提供 `latest`。平台：**linux/amd64**。\n\n'+readme
+    if not re.fullmatch(r'v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)', tag):
+        raise ValueError('无效的稳定版本号')
+    compose = (ROOT/'compose.yaml').read_text().strip()
+    if '{{VERSION}}' not in template or '{{COMPOSE}}' not in template:
+        raise ValueError('Docker Hub 文档模板缺少版本或 Compose 占位符')
+    return template.replace('{{VERSION}}', tag).replace('{{COMPOSE}}', compose)
+
 
 
 def main(action):
