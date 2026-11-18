@@ -1,0 +1,71 @@
+name: 发布瘦身测试镜像（不更新 latest）
+on:
+  push:
+    branches: ['audit/runtime-slim-20261118']
+    paths: ['.github/workflows/runtime-slim-publish.yml']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: runtime-slim-test-publish
+  cancel-in-progress: false
+jobs:
+  publish-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      IMAGE: talktoo/iptv-studio:slim-test-55f8cf7
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: 核对已通过回归的源码与测试标签
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$HUB_TOKEN"
+          test "$(gh run view 44186215716 --json conclusion --jq .conclusion)" = success
+          test "$(gh run view 44186215716 --json headSha --jq .headSha)" = "$(git rev-parse HEAD^)"
+          test "$(git diff --name-only HEAD^ HEAD)" = .github/workflows/runtime-slim-publish.yml
+          if docker buildx imagetools inspect "$IMAGE" > /dev/null 2>&1; then
+            echo '::error::测试标签已存在，拒绝覆盖'; exit 1
+          fi
+          echo "OUT=$RUNNER_TEMP/slim-test-publish" >> "$GITHUB_ENV"
+      - name: 构建精简测试镜像
+        run: |
+          set -euo pipefail
+          python3 scripts/package_release.py v0.0.0 "$OUT"
+          docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" --label "org.opencontainers.image.version=slim-test-55f8cf7" --label "org.opencontainers.image.licenses=GPL-3.0-only" -t "$IMAGE" "$OUT/context" > "$OUT/build.log" 2>&1
+      - name: 镜像启动检查及容器内完整回归
+        run: |
+          set -euo pipefail
+          python3 scripts/smoke_image.py "$IMAGE" "$OUT/context" | tee "$OUT/smoke.log"
+          docker run --init --rm --network none --mount "type=bind,source=$GITHUB_WORKSPACE,target=/verify,readonly" --workdir /verify -e PYTHONDONTWRITEBYTECODE=1 "$IMAGE" python3 scripts/verify_release.py | tee "$OUT/full-regression.log"
+      - name: 推送测试标签并重新拉取验证
+        env:
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$HUB_TOKEN" | docker login -u talktoo --password-stdin
+          trap 'docker logout >/dev/null' EXIT
+          before=$(docker image inspect "$IMAGE" --format '{{.Id}}')
+          docker push "$IMAGE" | tee "$OUT/push.log"
+          docker image rm "$IMAGE"
+          docker pull --platform linux/amd64 "$IMAGE"
+          test "$before" = "$(docker image inspect "$IMAGE" --format '{{.Id}}')"
+          docker buildx imagetools inspect "$IMAGE" | tee "$OUT/published-image.log"
+          python3 scripts/smoke_image.py "$IMAGE" "$OUT/context" | tee "$OUT/pulled-smoke.log"
+      - name: 保存测试镜像验证记录
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: slim-test-publish-validation
+          path: ${{ env.OUT }}/*.log
+          retention-days: 14
