@@ -46,3 +46,5 @@ Python 3.10+、Node.js 22+、FFmpeg。先阅读 README.md 和上述研究记录�
 - 台标缓存增量更新：refresh(logo) 不再删除缓存或全局清除失败冷却；request_logo_warm(only_missing=True) 只排入当前模式缺失/过期的候选集。地址/顺序变化自然生成新键，其他模式与无关缓存保留；同地址内容变化仍按 6h TTL 更新，后备缓存保留原 60s 优先源重试。cache_lock 按路径合并并发请求且随调用结束回收。verify_logo_incremental.py 覆盖下载/渲染次数、并发及失败保护。
 
 - 周检内容缓存替代 6h 地址缓存：index.json 以 URL 哈希定位内容 SHA256，内容哈希由归一化尺寸及 RGBA 像素组成；originals/ 保存去重原图，content-* 保存模式结果。来源每 7 天核验，未变不重写图片；失败退避 1h 保留旧图。新渲染成功后才释放 previous 内容引用。prune_cache 按当前目录引用清理，不触碰数据库原始上传。scheduler 每 5min 检查到期工作，独立于订阅计划且不打断已有台标任务。旧缓存优先服务前台，后台 migrate=True 补索引。verify_logo_weekly.py / verify_logo_lifecycle.py 覆盖边界、删除竞态、失败保留和调度。
+
+- 2026-11-18 增量清理：以包含全部待提交功能的 a33f699 为基线，清理源码 33c151f。删除无入口旧 CSS、测试专用旧包装；裁剪 Python 文档主题/演示及编译产物。两版各 57 项镜像回归、17 组业务快照、33 组交替实际探测通过；3193 个保留运行文件/链接一致，仅额外删 31 文件 797586 字节，Docker 同机统计 88528576→88311326 字节。详见 docs/maintenance-cleanup-20261118.md。cleanup-verify.yml 与 publish-verified-image.yml 保存并发布同一验证归档，源代码或构建文件变化时拒绝复用。

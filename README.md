@@ -16,7 +16,7 @@ IPTV Studio 是面向 NAS、家庭服务器和本地电脑的 IPTV 管理工具�
 
 项目不提供直播源。README 截图与静态 Demo 均使用虚构频道、模拟检测结果和 `.invalid` 示例地址，不包含家庭订阅或真实媒体。
 
-当前版本：[v1.1.4](https://github.com/Ringas/iptv-studio/releases/tag/v1.1.4) · [中文更新说明](docs/release-notes-v1.1.4.md)
+最近正式 Release：[v1.1.4](https://github.com/Ringas/iptv-studio/releases/tag/v1.1.4) · [中文更新说明](docs/release-notes-v1.1.4.md)
 
 ## 开发主线与精简镜像
 
