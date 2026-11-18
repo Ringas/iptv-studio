@@ -16,7 +16,15 @@ IPTV Studio 是面向 NAS、家庭服务器和本地电脑的 IPTV 管理工具�
 
 项目不提供直播源。README 截图与静态 Demo 均使用虚构频道、模拟检测结果和 `.invalid` 示例地址，不包含家庭订阅或真实媒体。
 
-当前版本：[v1.1.3](https://github.com/Ringas/iptv-studio/releases/tag/v1.1.3) · [中文更新说明](docs/release-notes-v1.1.3.md)
+当前版本：[v1.1.4](https://github.com/Ringas/iptv-studio/releases/tag/v1.1.4) · [中文更新说明](docs/release-notes-v1.1.4.md)
+
+## 开发主线与精简镜像
+
+`main` 从 v1.1.4 起采用已完成对照验证的精简运行环境，后续开发以此为基础。瘦身前的 v1.1.3 主线保存在 [history/pre-slim-v1.1.3](https://github.com/Ringas/iptv-studio/tree/history/pre-slim-v1.1.3)，旧 Release 与版本镜像保留。
+
+精简通过构建阶段的依赖检查移除未被保留程序依赖的系统库、Python 自测扩展和开发配置；保留 Python、Node.js、FFmpeg、必要动态模块、证书、时区及许可文件。构建基础固定为已验证的镜像摘要。对照构建的镜像体积约由 96.31 MB 减至 88.51 MB（约 8.1%），最终体积以对应标签为准；此变化不代表检测或播放性能提升。
+
+两版各 41 项隔离回归通过，17 组频道与导出快照一致，33 组固定受控检测对照没有判定分歧。检测门槛、启停、排序和试播规则沿用原实现；验证范围及记录见 [v1.1.4 更新说明](docs/release-notes-v1.1.4.md)。
 
 ## 界面预览
 

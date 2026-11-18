@@ -19,7 +19,7 @@ from time import monotonic as gateway_clock
 from email.utils import parsedate_to_datetime
 from contextlib import contextmanager
 from pathlib import Path
-from urllib.request import Request, urlopen, HTTPRedirectHandler, build_opener
+from urllib.request import Request, HTTPRedirectHandler, build_opener
 from urllib.error import HTTPError
 from http.client import HTTPException
 from urllib.parse import urlsplit,urljoin

@@ -5,6 +5,8 @@
 **镜像：** `talktoo/iptv-studio:{{VERSION}}` · `latest` 跟随最新稳定版  
 **平台：** `linux/amd64`，适用于 x86-64 NAS、Linux 服务器及使用 Linux 容器的 Docker 环境。
 
+从 **v1.1.4** 起采用精简运行环境，保留完整检测、试播、节目单与导出功能；镜像内仍包含 Python、Node.js、FFmpeg、证书、时区和许可。`latest` 使用此开发主线，升级后沿用原数据目录及端口配置。
+
 ## Docker Compose 部署
 
 将以下内容保存为 `compose.yaml`：

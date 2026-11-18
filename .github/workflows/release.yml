@@ -72,6 +72,9 @@ jobs:
         run: |
           docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" --label "org.opencontainers.image.version=$TAG" --label "org.opencontainers.image.licenses=GPL-3.0-only" -t "$IMAGE:$TAG" "$OUT/context"
           python3 scripts/smoke_image.py "$IMAGE:$TAG" "$OUT/context"
+      - name: 验证镜像内全部隔离回归
+        run: |
+          docker run --init --rm --network none --mount "type=bind,source=$GITHUB_WORKSPACE,target=/verify,readonly" --workdir /verify -e PYTHONDONTWRITEBYTECODE=1 "$IMAGE:$TAG" python3 scripts/verify_release.py
       - name: 保存已验证的运行包
         uses: actions/upload-artifact@v4
         with:
@@ -87,8 +90,13 @@ jobs:
           set -euo pipefail
           printf '%s' "$HUB_TOKEN" | docker login -u talktoo --password-stdin
           trap 'docker logout >/dev/null' EXIT
+          expected=$(docker image inspect "$IMAGE:$TAG" --format '{{.Id}}')
           docker push "$IMAGE:$TAG"
+          docker image rm "$IMAGE:$TAG"
+          docker pull --platform linux/amd64 "$IMAGE:$TAG"
+          test "$expected" = "$(docker image inspect "$IMAGE:$TAG" --format '{{.Id}}')"
           docker buildx imagetools inspect "$IMAGE:$TAG"
+          python3 scripts/smoke_image.py "$IMAGE:$TAG" "$OUT/context"
       - name: 发布已验证的 GitHub Release
         run: |
           set -euo pipefail

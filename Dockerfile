@@ -1,10 +1,11 @@
 # syntax=docker/dockerfile:1
-FROM node:24-bookworm-slim AS node
+FROM node:24-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS node
 RUN apt-get update && apt-get install -y --no-install-recommends binutils && strip /usr/local/bin/node
-FROM python:3.13-slim-bookworm AS pack
+FROM python:3.13-slim-bookworm@sha256:a5a7017efc5969e00ae2b91c8eb0631049a569652aa4ffc4501769049ae45c72 AS pack
 COPY --from=node /usr/local/bin/node /tmp/node
 COPY --from=node /usr/local/LICENSE /tmp/node-LICENSE
 RUN python -m pip install --no-cache-dir --only-binary=:all: --no-deps --target=/tmp/media imageio-ffmpeg==0.6.0
+COPY runtime-prune.py /tmp/runtime-prune.py
 # Keep the static decoder isolated from host glibc character-conversion plugins.
 # Mixing the two can crash FFmpeg on DVB metadata in valid MPEG-TS streams.
 RUN set -eu; cd /; mkdir -p runtime; \
@@ -24,6 +25,7 @@ RUN set -eu; cd /; mkdir -p runtime; \
     install -Dm644 /tmp/media/imageio_ffmpeg-*.dist-info/LICENSE /runtime/usr/local/share/doc/ffmpeg/LICENSE; \
     install -m644 /tmp/media/imageio_ffmpeg/binaries/README.md /runtime/usr/local/share/doc/ffmpeg/; \
     install -d -m1777 /runtime/tmp; install -d -o1000 -g1000 /runtime/app/data
+RUN python /tmp/runtime-prune.py /runtime
 FROM scratch
 COPY --from=pack /runtime/ /
 WORKDIR /app
