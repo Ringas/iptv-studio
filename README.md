@@ -18,6 +18,8 @@ IPTV Studio 是面向 NAS、家庭服务器和本地电脑的 IPTV 管理工具�
 
 版本：[v1.1.5](https://github.com/Ringas/iptv-studio/releases/tag/v1.1.5) · [中文更新说明](docs/release-notes-v1.1.5.md)
 
+v1.1.5 支持检测中保存订阅并排队更新；镜像通过 59 项隔离回归后，以无损 gzip9 压缩发布。压缩层合计 88,106,218 字节，相比同代码默认 gzip 减少 0.228%；精简运行包约 314 KiB。旧版本保留，压缩报告随 Release 提供。
+
 ## 开发主线与精简镜像
 
 `main` 从 v1.1.4 起采用已完成对照验证的精简运行环境，后续开发以此为基础。瘦身前的 v1.1.3 主线保存在 [history/pre-slim-v1.1.3](https://github.com/Ringas/iptv-studio/tree/history/pre-slim-v1.1.3)，旧 Release 与版本镜像保留。
