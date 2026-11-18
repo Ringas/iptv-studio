@@ -1,0 +1,88 @@
+name: 正式与瘦身镜像功能及测速逐项对照
+on:
+  push:
+    branches: ['audit/runtime-slim-20261118']
+    paths: ['.github/workflows/runtime-differential.yml', 'scripts/differential_*.py']
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [baseline, candidate]
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: 使用各镜像自身的业务文件进行完整回归
+        env:
+          VERSION: ${{ matrix.version }}
+        run: |
+          set -euo pipefail
+          image=talktoo/iptv-studio:v1.1.3
+          if [[ "$VERSION" == candidate ]]; then image=talktoo/iptv-studio:slim-test-55f8cf7; fi
+          docker pull "$image"
+          verify="$RUNNER_TEMP/verify-$VERSION"
+          python3 -c 'import shutil,sys;shutil.copytree(".",sys.argv[1],ignore=shutil.ignore_patterns(".git","__pycache__"))' "$verify"
+          container=$(docker create "$image")
+          docker cp "$container:/app/." "$verify/"
+          docker rm -v "$container"
+          docker run --init --rm --network none --mount "type=bind,source=$verify,target=/verify,readonly" --workdir /verify -e PYTHONDONTWRITEBYTECODE=1 "$image" python3 scripts/verify_release.py | tee "$RUNNER_TEMP/$VERSION-regression.log"
+          docker run --init --rm --network none --mount "type=bind,source=$GITHUB_WORKSPACE/scripts/differential_catalog.py,target=/tmp/differential_catalog.py,readonly" -e PYTHONPATH=/app -e PYTHONDONTWRITEBYTECODE=1 "$image" python3 /tmp/differential_catalog.py > "$RUNNER_TEMP/$VERSION-catalog.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: differential-${{ matrix.version }}
+          path: |
+            ${{ runner.temp }}/*-regression.log
+            ${{ runner.temp }}/*-catalog.json
+  detector:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: 安装固定样本生成器
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: 同机交替进行真实下载解码和逐项判定对照
+        run: |
+          set -euo pipefail
+          python3 scripts/differential_detection.py "$RUNNER_TEMP/differential-media" | tee "$RUNNER_TEMP/differential-detection.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: differential-detector
+          path: |
+            ${{ runner.temp }}/differential-media/differential.json
+            ${{ runner.temp }}/differential-detection.log
+  compare:
+    needs: [regression, detector]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: results
+      - name: 核对两版完整回归、频道与订阅导出完全一致
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('results')
+          a=json.loads((p/'differential-baseline/baseline-catalog.json').read_text())
+          b=json.loads((p/'differential-candidate/candidate-catalog.json').read_text())
+          assert a==b,'频道状态、门槛边界或订阅导出出现差异'
+          for label in ('baseline','candidate'):
+              assert '全部 41 项隔离回归通过。' in (p/f'differential-{label}/{label}-regression.log').read_text()
+          d=json.loads((p/'differential-detector/differential.json').read_text())
+          assert len(d['pairs'])==28 and not d['differences'] and not d['validation_errors'],d
+          print(f'两版完整回归通过；{len(a)} 组频道/边界/导出快照一致；{len(d["pairs"])} 组实际检测结果一致。')
+          PY
