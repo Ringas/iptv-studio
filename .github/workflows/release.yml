@@ -80,23 +80,31 @@ jobs:
           set -euo pipefail
           printf '%s' "$HUB_TOKEN" | skopeo login --username talktoo --password-stdin docker.io
           trap 'skopeo logout docker.io >/dev/null' EXIT
-          expected=$(python3 - <<'PYCODE'
+          python3 - <<'PYCODE'
           import json,tarfile
+          from pathlib import Path
           with tarfile.open('/tmp/candidate/gzip-9.tar') as t:
               def doc(d):return json.load(t.extractfile('blobs/sha256/'+d['digest'].split(':')[1]))
               def select(d):
                   v=doc(d)
                   if 'config' in v:
                       c=doc(v['config'])
-                      if (c.get('os'),c.get('architecture'))==('linux','amd64'):yield v['config']['digest']
+                      if (c.get('os'),c.get('architecture'))==('linux','amd64'):yield c
                   else:
                       for child in v.get('manifests',[]):yield from select(child)
-              ids=[i for d in json.load(t.extractfile('index.json'))['manifests'] for i in select(d)]
-              assert len(ids)==1
-              print(ids[0])
+              configs=[c for d in json.load(t.extractfile('index.json'))['manifests'] for c in select(d)]
+              assert len(configs)==1
+              Path('/tmp/expected-config.json').write_text(json.dumps(configs[0]))
+          Path('/tmp/verify-pulled.py').write_text("""import json,subprocess,sys
+          expected=json.load(open('/tmp/expected-config.json'))
+          actual=json.loads(subprocess.check_output(['docker','image','inspect',sys.argv[1]]))[0]
+          assert actual['RootFS']['Layers']==expected['rootfs']['diff_ids'],'拉取后原始层摘要变化'
+          for key,value in expected['config'].items():
+              assert actual['Config'].get(key)==value,(key,actual['Config'].get(key),value)
+          assert (actual['Os'],actual['Architecture'])==('linux','amd64')
+          print('仓库镜像原始层与运行配置核对通过')
+          """)
           PYCODE
-          )
-          echo "EXPECTED_IMAGE_ID=$expected" >> "$GITHUB_ENV"
           source_digest=$(skopeo inspect --raw oci-archive:/tmp/candidate/gzip-9.tar | sha256sum | cut -d' ' -f1)
           if skopeo inspect --raw "docker://$IMAGE:$TAG" > /tmp/existing-manifest.json 2>/dev/null; then
             test "$source_digest" = "$(sha256sum /tmp/existing-manifest.json | cut -d' ' -f1)" || { echo '::error::版本标签已有不同镜像，拒绝覆盖'; exit 1; }
@@ -105,7 +113,7 @@ jobs:
           fi
           docker image rm "$IMAGE:$TAG"
           docker pull --platform linux/amd64 "$IMAGE:$TAG"
-          test "$expected" = "$(docker inspect "$IMAGE:$TAG" --format '{{.Id}}')"
+          python3 /tmp/verify-pulled.py "$IMAGE:$TAG"
           python3 scripts/smoke_image.py "$IMAGE:$TAG" /tmp/package-check/context
       - name: 发布中文 Release 与精简运行包
         run: |
@@ -126,5 +134,5 @@ jobs:
           latest_digest=$(skopeo inspect --raw "docker://$IMAGE:latest" | sha256sum | cut -d' ' -f1)
           test "$version_digest" = "$latest_digest"
           docker pull --platform linux/amd64 "$IMAGE:latest"
-          test "$EXPECTED_IMAGE_ID" = "$(docker inspect "$IMAGE:latest" --format '{{.Id}}')"
+          python3 /tmp/verify-pulled.py "$IMAGE:latest"
           python3 scripts/smoke_image.py "$IMAGE:latest" /tmp/package-check/context
