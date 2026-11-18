@@ -1,0 +1,36 @@
+name: 对比正式版与瘦身版试播首帧
+on:
+  push:
+    branches: ['audit/runtime-slim-20261118']
+    paths: ['.github/workflows/runtime-player-benchmark.yml', 'scripts/benchmark_player.*']
+permissions:
+  contents: read
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: 安装仅用于虚构测试媒体的生成器
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: 交替对比实际 UI 试播首帧
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/player-benchmark"
+          python3 scripts/benchmark_player.py "$RUNNER_TEMP/player-benchmark" | tee "$RUNNER_TEMP/player-benchmark/run.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: player-first-frame-benchmark
+          path: |
+            ${{ runner.temp }}/player-benchmark/*.log
+            ${{ runner.temp }}/player-benchmark/*.json
+          retention-days: 14
