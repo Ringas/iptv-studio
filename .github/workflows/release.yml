@@ -78,11 +78,31 @@ jobs:
           HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           set -euo pipefail
-          if skopeo inspect "docker://$IMAGE:$TAG" >/dev/null 2>&1; then echo '::error::版本镜像已存在，不覆盖旧版本'; exit 1; fi
           printf '%s' "$HUB_TOKEN" | skopeo login --username talktoo --password-stdin docker.io
           trap 'skopeo logout docker.io >/dev/null' EXIT
-          expected=$(docker inspect "$IMAGE:$TAG" --format '{{.Id}}')
-          skopeo copy --all --preserve-digests oci-archive:/tmp/candidate/gzip-9.tar "docker://$IMAGE:$TAG"
+          expected=$(python3 - <<'PYCODE'
+          import json,tarfile
+          with tarfile.open('/tmp/candidate/gzip-9.tar') as t:
+              def doc(d):return json.load(t.extractfile('blobs/sha256/'+d['digest'].split(':')[1]))
+              def select(d):
+                  v=doc(d)
+                  if 'config' in v:
+                      c=doc(v['config'])
+                      if (c.get('os'),c.get('architecture'))==('linux','amd64'):yield v['config']['digest']
+                  else:
+                      for child in v.get('manifests',[]):yield from select(child)
+              ids=[i for d in json.load(t.extractfile('index.json'))['manifests'] for i in select(d)]
+              assert len(ids)==1
+              print(ids[0])
+          PYCODE
+          )
+          echo "EXPECTED_IMAGE_ID=$expected" >> "$GITHUB_ENV"
+          source_digest=$(skopeo inspect --raw oci-archive:/tmp/candidate/gzip-9.tar | sha256sum | cut -d' ' -f1)
+          if skopeo inspect --raw "docker://$IMAGE:$TAG" > /tmp/existing-manifest.json 2>/dev/null; then
+            test "$source_digest" = "$(sha256sum /tmp/existing-manifest.json | cut -d' ' -f1)" || { echo '::error::版本标签已有不同镜像，拒绝覆盖'; exit 1; }
+          else
+            skopeo copy --all --preserve-digests oci-archive:/tmp/candidate/gzip-9.tar "docker://$IMAGE:$TAG"
+          fi
           docker image rm "$IMAGE:$TAG"
           docker pull --platform linux/amd64 "$IMAGE:$TAG"
           test "$expected" = "$(docker inspect "$IMAGE:$TAG" --format '{{.Id}}')"
@@ -106,5 +126,5 @@ jobs:
           latest_digest=$(skopeo inspect --raw "docker://$IMAGE:latest" | sha256sum | cut -d' ' -f1)
           test "$version_digest" = "$latest_digest"
           docker pull --platform linux/amd64 "$IMAGE:latest"
-          test "$(docker inspect "$IMAGE:$TAG" --format '{{.Id}}')" = "$(docker inspect "$IMAGE:latest" --format '{{.Id}}')"
+          test "$EXPECTED_IMAGE_ID" = "$(docker inspect "$IMAGE:latest" --format '{{.Id}}')"
           python3 scripts/smoke_image.py "$IMAGE:latest" /tmp/package-check/context
