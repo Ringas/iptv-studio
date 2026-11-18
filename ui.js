@@ -841,7 +841,7 @@ function sourceToggle(s){
  const button=document.createElement('button');
  button.type='button';button.dataset.sourceToggle=s.id;
  setSwitch(button,Boolean(s.enabled),'订阅 '+s.name);
- button.disabled=busy||changingSources.has(s.id);
+ button.disabled=changingSources.has(s.id);
  button.title='点击'+toggleText(!s.enabled)+'订阅，立即生效。'+(s.kind==='logo'?'停用后不再更新或用于台标匹配。':'停用后不再更新或发布其内容。');
  return button.outerHTML;
 }
@@ -853,7 +853,7 @@ function renderFeeds(){
    <div class="feed-address"><small>订阅地址</small><p class="url">${esc(s.url)}</p></div>
    <dl class="feed-facts"><div><dt>定时更新</dt><dd>${esc(sourceSchedule(s))}</dd></div><div><dt>资料优先级</dt><dd>${s.priority}</dd></div></dl>
    ${s.guide_urls?.length?`<details class="feed-guides"><summary>自带节目单 <span>${s.guide_urls.length}</span></summary>${s.guide_urls.map(url=>`<p class="url">${esc(url)}</p>`).join('')}</details>`:''}
-   <div class="feed-bottom"><small><span class="feed-result-label">最近更新${s.updated?' · '+esc(formatTime(s.updated)):''}</span>${esc(s.last||'尚未更新，保存后自动更新')}</small><div class="feed-actions"><button type="button" class="source-refresh" data-source-refresh="${s.id}" aria-label="更新 ${esc(s.name)}" title="更新 ${esc(s.name)} · 仅更新此订阅，不检测线路。" ${busy||refreshingSources.has(s.id)?'disabled':''}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3a7 7 0 0 0 11.6-1"/></svg></button><button type="button" data-feed="${s.id}" aria-label="编辑 ${esc(s.name)}" ${busy?'disabled':''}>编辑订阅</button></div></div>
+   <div class="feed-bottom"><small><span class="feed-result-label">最近更新${s.updated?' · '+esc(formatTime(s.updated)):''}</span>${s.pending_update?'<span data-source-pending>等待更新 · 当前任务结束后执行</span>':esc(s.last||'尚未更新，保存后自动更新')}</small><div class="feed-actions"><button type="button" class="source-refresh" data-source-refresh="${s.id}" data-pending-update="${s.pending_update?1:0}" aria-label="更新 ${esc(s.name)}" title="更新 ${esc(s.name)} · 仅更新此订阅，不检测线路。" ${s.pending_update||refreshingSources.has(s.id)?'disabled':''}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3a7 7 0 0 0 11.6-1"/></svg></button><button type="button" data-feed="${s.id}" aria-label="编辑 ${esc(s.name)}" >编辑订阅</button></div></div>
  </article>`).join('')||'<div class="source-empty"><h2>添加你的第一个订阅</h2><p>接入直播清单、节目单或台标，统一管理订阅。</p><button type="button" id="emptyAddSource" class="primary">添加订阅</button></div>';
  if($('emptyAddSource'))$('emptyAddSource').onclick=()=>editSource();
  applyHelp($('feeds'));syncSourceActions(liveJob||{running:busy});
@@ -867,7 +867,7 @@ function sourceSchedule(s){
 function editSource(id){
  const s=state.sources.find(x=>x.id===id)||{enabled:1,priority:10,kind:'playlist'};
  const mode=s.interval_hours==null?'inherit':s.interval_hours===0?'off':'custom';
- const html=`<div class="source-intro">${sourceIcon(s.kind)}<p>连接直播、节目单或台标；保存后自动更新当前订阅。</p></div>
+ const html=`<div class="source-intro">${sourceIcon(s.kind)}<p>连接直播、节目单或台标；保存后更新当前订阅；有任务运行时排队。</p></div>
  <section class="source-section"><h3>订阅信息</h3><div class="source-form-grid">
  <label>订阅名称<input name="name" required placeholder="例如：家庭直播源" value="${esc(s.name||'')}"></label>
  <label>内容类型<select name="kind"><option value="playlist">直播 · M3U / TXT</option><option value="epg" ${s.kind==='epg'?'selected':''}>节目单 · XMLTV / GZIP</option><option value="logo" ${s.kind==='logo'?'selected':''}>台标 · JSON</option></select></label>
@@ -1153,12 +1153,12 @@ function locateProbe(name){
  }
 }
 function syncSourceActions(job){
- $('newSource').disabled=busy;
- for(const button of document.querySelectorAll('[data-feed]'))button.disabled=busy;
+ $('newSource').disabled=false;
+ for(const button of document.querySelectorAll('[data-feed]'))button.disabled=false;
  for(const button of document.querySelectorAll('[data-source-refresh]')){
    const id=+button.dataset.sourceRefresh;
-   const active=busy&&!job.probing&&['refresh','scheduled'].includes(job.action)&&(job.source_id===id||job.active_source_id===id);
-   button.disabled=busy||refreshingSources.has(id);
+   const active=button.dataset.pendingUpdate!=='1'&&busy&&!job.probing&&['refresh','scheduled'].includes(job.action)&&(job.source_id===id||job.active_source_id===id);
+   button.disabled=active||refreshingSources.has(id)||(job.queued_sources||[]).includes(id);
    button.classList.toggle('is-updating',Boolean(active));button.setAttribute('aria-busy',String(Boolean(active)));
  }
 }
@@ -1172,7 +1172,7 @@ async function status(){
  busy=job.running;$('sync').disabled=busy;updateProbeAction();
  syncSourceActions(job);
  for(const button of document.querySelectorAll('[data-test]'))button.disabled=busy;
- for(const button of document.querySelectorAll('[data-source-toggle]'))button.disabled=busy||changingSources.has(+button.dataset.sourceToggle);
+ for(const button of document.querySelectorAll('[data-source-toggle]'))button.disabled=changingSources.has(+button.dataset.sourceToggle);
  $('probePicked').disabled=busy||!picked.size;
  if(wasRunning&&!job.running){await reload(job.action==='probe');}
  else if(revision!==job.revision){await reload(job.running||job.action==='probe'||revision===null);}
@@ -1190,15 +1190,15 @@ document.addEventListener('click',safely(async e=>{
  const refreshButton=e.target.closest('[data-source-refresh]');
  if(refreshButton){
    const id=+refreshButton.dataset.sourceRefresh;
-   if(busy||refreshingSources.has(id))return;
+   if(refreshingSources.has(id))return;
    refreshingSources.add(id);refreshButton.disabled=true;
-   try{await api('job',{action:'refresh',source_id:id});wasRunning=true;await status();}
+   try{const saved=await api('job',{action:'refresh',source_id:id});wasRunning=true;await reload();await status();if(saved.refresh_queued)notice('已排队，当前任务结束后更新此订阅');}
    finally{refreshingSources.delete(id);await status();}
    return;
  }
  if(d.sourceToggle){
    const id=+d.sourceToggle,s=state.sources.find(s=>s.id===id);
-   if(!s||busy||changingSources.has(id))return;
+   if(!s||changingSources.has(id))return;
    const before=Boolean(s.enabled),button=e.target;
    changingSources.add(id);button.disabled=true;setSwitch(button,!before,'订阅 '+s.name);
    let saved=false;
@@ -1208,7 +1208,7 @@ document.addEventListener('click',safely(async e=>{
    }catch(error){if(!saved)setSwitch(button,before,'订阅 '+s.name);throw error;}
    finally{
      changingSources.delete(id);
-     for(const b of document.querySelectorAll('[data-source-toggle]'))b.disabled=busy||changingSources.has(+b.dataset.sourceToggle);
+     for(const b of document.querySelectorAll('[data-source-toggle]'))b.disabled=changingSources.has(+b.dataset.sourceToggle);
    }
    return;
  }
@@ -1378,10 +1378,13 @@ $('hiddenManager').onclick=()=>{renderHidden();$('hiddenDialog').showModal();};
 $('closeHidden').onclick=()=>$('hiddenDialog').close();
 $('newSource').onclick=()=>editSource();$('close').onclick=()=>$('dialog').close();
 $('editor').onsubmit=safely(async e=>{e.preventDefault();
- if($('channelSettings')?.disabled)return;
+ if(e.currentTarget.dataset.saving==='true')return;
+ e.currentTarget.dataset.saving='true';
+ try{
+ if(!$('channelEdit').hidden&&$('channelSettings')?.disabled)return;
  const form=e.target,fields=$('fields').firstElementChild;
  const saved=await editing(form);
- if(saved?.refresh_started){wasRunning=true;await status();}
+ if(saved?.refresh_started||saved?.refresh_queued){wasRunning=true;await status();}
  await reload();
  if($('dialog').open&&$('fields').firstElementChild===fields){
    if(typeof saved==='string'){
@@ -1389,7 +1392,9 @@ $('editor').onsubmit=safely(async e=>{e.preventDefault();
      if(channel)editChannel(channel.name);else $('dialog').close();
    }else $('dialog').close();
  }
- notice(saved?.refresh_started?'已保存，已发起该订阅更新':'已保存');});
+ notice(saved?.refresh_queued?'已保存，当前任务结束后更新此订阅':saved?.refresh_started?'已保存，已发起该订阅更新':'已保存');
+ }finally{e.target.dataset.saving='false';}
+});
 let settingsDirty=false;
 function probeModeChoice(cfg){
  return cfg.probe_mode==='pipeline'?'pipeline_dual':cfg.probe_mode==='continuous'?'continuous':'adaptive';

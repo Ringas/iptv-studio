@@ -128,6 +128,7 @@ def init():
         create table if not exists settings(value text);
         create table if not exists admin_access(id integer primary key check(id=1), salt blob not null, verifier blob not null);
         create table if not exists sources(id integer primary key,name text,kind text,url text,priority integer,enabled integer,items text default '[]',xml blob,last text default '',updated integer default 0);
+        create table if not exists source_refresh_queue(source_id integer primary key,version text not null,queued integer not null);
         create table if not exists tests(url text primary key,result text);
         create table if not exists channel_logos(name text primary key,digest text not null,png blob not null);
         create table if not exists rules(name text primary key,value text);
@@ -148,11 +149,15 @@ def init():
               )
             ) where rank=1;
         """)
+        if 'version' not in {r['name'] for r in c.execute('pragma table_info(sources)')}:
+            c.execute("alter table sources add column version text not null default ''")
+        for row in c.execute("select id from sources where version=''").fetchall():
+            c.execute('update sources set version=? where id=?',(uuid.uuid4().hex,row['id']))
         if 'kind' not in {r['name'] for r in c.execute('pragma table_info(logs)')}:
             c.execute("alter table logs add column kind text not null default 'history'")
             c.execute("alter table logs add column details text not null default '{}'")
         if 'interval_hours' not in {r['name'] for r in c.execute('pragma table_info(sources)')}:
-            c.execute('begin immediate')
+            if not c.in_transaction:c.execute('begin immediate')
             c.execute('alter table sources add column interval_hours real')
             c.execute('alter table sources add column next_update integer not null default 0')
             if c.execute('select 1 from settings').fetchone():
@@ -248,7 +253,7 @@ def fetch(url,limit,timeout=20):
         if len(raw)>limit: raise ValueError('解压后超过限制')
     return raw,base
 
-def update_guide(url,attempts):
+def update_guide(url,attempts,source):
     if url in attempts:
         count,error=attempts[url]
         if error:raise ValueError(error)
@@ -258,9 +263,11 @@ def update_guide(url,attempts):
         root=xmlroot(raw)
         count=len(root.findall('programme'))
         if not count: raise ValueError('XMLTV 没有节目，保留旧快照')
-        with db() as c:
+        with LOCK,db() as c:
+            require_current_source(c,source)
             c.execute('insert or replace into epg_cache values(?,?,?,?,?)',
                       (url,raw,encode(programme_profiles(root)),encode(xmltv_logos(root,base)),count))
+    except StaleSource:raise
     except Exception as exc:
         attempts[url]=(0,str(exc))
         raise
@@ -367,7 +374,55 @@ def identify_gateway_routes(items,source):
     if pending:
         with ThreadPoolExecutor(max_workers=2) as pool:list(pool.map(inspect,pending))
 
+class StaleSource(ValueError):
+    pass
+
+
+def require_current_source(c,source):
+    current=c.execute('select version from sources where id=?',(source['id'],)).fetchone()
+    if not current or current['version']!=source['version']:
+        raise StaleSource('订阅已变更，忽略旧更新结果')
+
+
+def route_source_versions(c):
+    versions={}
+    query="select id,version,items from sources where enabled and kind='playlist'"
+    for source in c.execute(query):
+        for item in json.loads(source['items']):
+            versions.setdefault(item['url'],set()).add((source['id'],source['version']))
+    return versions
+
+
+def enqueue_source_refresh(c,source_id,version):
+    c.execute('insert into source_refresh_queue values(?,?,?) on conflict(source_id) do update set version=excluded.version',
+              (source_id,version,time.time_ns()))
+
+
+def queue_source_refresh(source_id):
+    if type(source_id) is not int or source_id<1:raise ValueError('请选择一个有效订阅进行更新')
+    with LOCK,db() as c:
+        row=c.execute('select version from sources where id=?',(source_id,)).fetchone()
+        if not row:raise ValueError('订阅不存在')
+        enqueue_source_refresh(c,source_id,row['version'])
+        job['revision']+=1
+    return drain_refresh_queue()==source_id
+
+
+def drain_refresh_queue(handoff=False):
+    with LOCK:
+        if job['running'] and not handoff:return
+        with db() as c:
+            c.execute('delete from source_refresh_queue where source_id not in (select id from sources)')
+            c.execute('update source_refresh_queue set version=(select version from sources where id=source_id)')
+            row=c.execute('select source_id from source_refresh_queue order by queued,source_id limit 1').fetchone()
+        if row:
+            start('refresh',source_id=row['source_id'],_handoff=handoff)
+            return row['source_id']
+        if handoff:job['running']=False
+
+
 def refresh(source,attempts):
+    with LOCK,db() as c:require_current_source(c,source)
     linked_errors=[]
     items=[]
     if source['kind']=='playlist':
@@ -377,7 +432,7 @@ def refresh(source,attempts):
         identify_gateway_routes(items,source)
         links=playlist_guides(text,base)
         for i,url in enumerate(links,1):
-            try:update_guide(url,attempts)
+            try:update_guide(url,attempts,source)
             except Exception as exc:linked_errors.append(f'节目单 {i}：{exc}')
         message=f'成功 · {len(items)} 条'
         if links:message+=f' · 自带节目单 {len(links)-len(linked_errors)}/{len(links)} 份更新成功'
@@ -388,8 +443,9 @@ def refresh(source,attempts):
         logo_index=parse_index(raw,base)
         message=f'成功 · {len(set(logo_index.values()))} 个台标'
     else:
-        message=f"成功 · {update_guide(source['url'],attempts)} 条"
-    with db() as c:
+        message=f"成功 · {update_guide(source['url'],attempts,source)} 条"
+    with LOCK,db() as c:
+        require_current_source(c,source)
         if source['kind']=='playlist':
             sid=source['id']
             c.execute('delete from eit_events where stop<=?',(int(time.time()),))
@@ -511,8 +567,23 @@ def probe(url,method,options):
 def progress(message,done,total):
     with LOCK: job.update(message=message,done=done,total=total)
 
+def run(action,requested,source_snapshot=None):
+    with LOCK:
+        if source_snapshot is None:
+            with db() as c:source_snapshot=tuple((r['id'],r['version']) for r in c.execute("select id,version from sources where enabled and kind='playlist'"))
+        job.update(running=True,_source_versions=source_snapshot)
+    try:return run_task(action,requested)
+    finally:
+        with LOCK:
+            job.pop('_source_versions',None)
+            try:drain_refresh_queue(handoff=True)
+            except Exception as exc:
+                job['running']=False
+                diagnostic_exception('task.error','待更新队列暂未启动，保留队列',exc)
+
+
 @task_context(job)
-def run(action,requested):
+def run_task(action,requested):
     global dual_lease_dir
     lease_temp=None
     failures=0
@@ -533,7 +604,7 @@ def run(action,requested):
             for i,s in enumerate(sources):
                 source_started=time.monotonic()
                 event('refresh.started','开始读取订阅','DEBUG',source=s['name'],source_id=s['id'],source_kind=s['kind'],url=s['url'])
-                with LOCK:job['active_source_id']=s['id']
+                with LOCK:job.update(active_source_id=s['id'],active_source_version=s['version'])
                 progress('更新 '+s['name'],i,len(sources))
                 try:
                     urls,errors=refresh(s,guide_attempts)
@@ -542,20 +613,30 @@ def run(action,requested):
                     with db() as c:
                         row=c.execute('select last from sources where id=?',(s['id'],)).fetchone()
                         log(c,row['last'] if row else '更新完成','refresh',source=s['name'],result='部分失败' if errors else '成功',reason='；'.join(errors),elapsed_ms=round((time.monotonic()-source_started)*1000),updated_routes=len(urls))
+                except StaleSource:
+                    with db() as c:log(c,'订阅已变更，忽略旧更新结果','refresh',source=s['name'],result='已忽略')
                 except Exception as exc:
                     failures+=1
-                    with db() as c:
+                    with LOCK,db() as c:
+                        try:require_current_source(c,s)
+                        except StaleSource:continue
                         msg='失败，保留旧快照 · '+str(exc)[:250]
                         c.execute('update sources set last=? where id=?',(msg,s['id']))
                         log(c,'保留旧快照','refresh',source=s['name'],result='失败',reason=str(exc)[:1600],elapsed_ms=round((time.monotonic()-source_started)*1000),error_type=type(exc).__name__,http_status=getattr(exc,'code',None))
+                with LOCK,db() as c:
+                    c.execute('delete from source_refresh_queue where source_id=? and version=?',(s['id'],s['version']))
                 if action=='scheduled':
                     with LOCK,db() as c:
                         hours=s['interval_hours'] if s['interval_hours'] is not None else config(c)['minutes']/60
-                        c.execute('update sources set next_update=? where id=? and next_update=?',(deadline(hours),s['id'],s['next_update']))
+                        c.execute('update sources set next_update=? where id=? and next_update=? and version=?',(deadline(hours),s['id'],s['next_update'],s['version']))
             with db() as c:prune_guides(c)
         with db() as c: cfg=config(c)
         if action=='probe' or (action=='scheduled' and cfg['auto_probe'] and updated_urls):
-            with db() as c: channels=catalog(c)
+            with LOCK,db() as c:
+                channels=catalog(c)
+                source_versions=route_source_versions(c)
+                initial_sources=set(job['_source_versions'])
+                source_versions={u:owners if owners<=initial_sources else set() for u,owners in source_versions.items()}
             routes={}
             for ch in channels:
                 # Catalog already excludes disabled sources and hidden content.
@@ -590,6 +671,13 @@ def run(action,requested):
             i=0
             while i<len(targets):
                 u=targets[i]
+                with LOCK,db() as c:
+                    if not source_versions.get(u) or source_versions.get(u)!=route_source_versions(c).get(u):
+                        outcomes[u]='skipped'
+                        log(c,'订阅已变更，本轮跳过旧线路','probe',channel=' / '.join(routes.get(u,{}).get('channels',[])),url=u,result='已跳过')
+                        job.update(done=i+1,revision=job['revision']+1)
+                        i+=1
+                        continue
                 def wait_for(address):return max(gateway_delay(address),retries[address]-time.monotonic() if address in retries else 0,0)
                 if u not in prefetched and wait_for(u)>0:
                     ready=next((k for k in range(i+1,len(targets)) if wait_for(targets[k])<=0),None)
@@ -637,6 +725,13 @@ def run(action,requested):
                     result.setdefault('at',time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()))
                     result['evidence']['qualification']={**qualification_policy(cfg),'state':'not_verified','assessment':'未能验证'}
                 with LOCK, db() as c:
+                    if (not source_versions.get(u) or source_versions.get(u)!=route_source_versions(c).get(u)
+                            or not any(r['url']==u for ch in catalog(c) for r in ch['lines'])):
+                        outcomes[u]='skipped'
+                        log(c,'订阅或线路已变更，保留原检测和启停状态','probe',channel=channel,url=u,result='已跳过')
+                        job.update(done=i+1,active_url=None,sample=None,revision=job['revision']+1)
+                        i+=1
+                        continue
                     fields=dict(channel=channel,line=info.get('line'),source=' / '.join(info['sources']),url=u,route_id=route_id(u),attempt='recheck' if is_recheck else 'initial',diagnostic=probe_details(result))
                     if job['stop_line']:
                         if job['stop_line']=='已跳过': skipped+=1
@@ -782,11 +877,11 @@ def run(action,requested):
             if message.startswith('任务中断'):
                 with db() as c: log(c,message)
             if action in ('scheduled','refresh'):job['revision']+=1
-            job.update(running=False,message=message,probing=False,active_source_id=None,active_url=None,active_channel='',sample=None,active_lines={})
+            job.update(message=message,probing=False,active_source_id=None,active_url=None,active_channel='',sample=None,active_lines={})
 
-def start(action,url=None,urls=None,source_id=None):
+def start(action,url=None,urls=None,source_id=None,_handoff=False):
     with LOCK:
-        if job['running']: raise ValueError('已有任务运行中')
+        if job['running'] and not _handoff: raise ValueError('已有任务运行中')
         if action not in ('probe','refresh','scheduled'): raise ValueError('未知任务')
         if source_id is not None:
             if action!='refresh' or url is not None or urls is not None or type(source_id) is not int or source_id<1:
@@ -804,7 +899,8 @@ def start(action,url=None,urls=None,source_id=None):
             if not set(urls)<=available: raise ValueError('所选线路已变动，请刷新后重选')
             urls=list(dict.fromkeys(urls))
         job.update(source_id=source_id,active_source_id=source_id,run_id=uuid.uuid4().hex,stop_line=False,stop_queue=False,probing=False,running=True,action=action,message='准备任务',done=0,total=0)
-        threading.Thread(target=run,args=(action,[source_id] if source_id is not None else urls),daemon=True).start()
+        with db() as c:source_snapshot=tuple((r['id'],r['version']) for r in c.execute("select id,version from sources where enabled and kind='playlist'"))
+        threading.Thread(target=run,args=(action,[source_id] if source_id is not None else urls,source_snapshot),daemon=True).start()
 
 def scheduler():
     last_error=None
@@ -814,6 +910,7 @@ def scheduler():
         time.sleep(5)
         try:
             with LOCK,db() as c:
+                if not job['running']:drain_refresh_queue()
                 if not job['running'] and c.execute('select 1 from sources where enabled and next_update between 1 and ? limit 1',(int(time.time()),)).fetchone():
                     start('scheduled')
             if time.monotonic()>=next_logo_check and not logo_status()['running']:
@@ -987,13 +1084,12 @@ def prepare_logo(encoded):
     if proc.returncode or not proc.stdout.startswith(b'\x89PNG'):raise ValueError('图片无法读取或超过 1600 万像素')
     return proc.stdout
 
-def edit(kind,p):
+def edit(kind,p,queue_refresh=False):
     source_id=None
     warm_logos=False
     if kind=='channel-logo':
         image=prepare_logo(p['image']) if p['image'] is not None else None
     with LOCK,db() as c:
-        if job['running'] and kind in ('source','source-state','delete'): raise ValueError('请等待任务结束再修改订阅')
         if kind=='clear-logs':
             category=p.get('kind')
             if category not in ('refresh','probe','history'):raise ValueError('请选择有效的记录类型')
@@ -1030,14 +1126,15 @@ def edit(kind,p):
             if not row: raise ValueError('订阅不存在')
             if bool(row['enabled'])!=p['enabled']:
                 hours=row['interval_hours'] if row['interval_hours'] is not None else config(c)['minutes']/60
-                c.execute('update sources set enabled=?,next_update=? where id=?',(int(p['enabled']),deadline(hours,p['enabled']),int(p['id'])))
+                c.execute('update sources set enabled=?,next_update=?,version=? where id=?',(int(p['enabled']),deadline(hours,p['enabled']),uuid.uuid4().hex,int(p['id'])))
+                if not p['enabled']:c.execute('delete from source_refresh_queue where source_id=?',(int(p['id']),))
         elif kind=='source':
             name=p['name'].strip()
             if not name or p['kind'] not in ('playlist','epg','logo'): raise ValueError('请填写名称并选择类型')
             url=weburl(p['url'].strip())
             old=None
             if p.get('id'):
-                old=c.execute('select kind,url,enabled,interval_hours,next_update from sources where id=?',(int(p['id']),)).fetchone()
+                old=c.execute('select kind,url,enabled,interval_hours,next_update,version from sources where id=?',(int(p['id']),)).fetchone()
                 if not old: raise ValueError('订阅不存在')
             vals=(name,p['kind'],url,int(p['priority']),int(bool(p.get('enabled',old['enabled'] if old else True))))
             interval=p.get('interval_hours',old['interval_hours'] if old else None)
@@ -1059,6 +1156,10 @@ def edit(kind,p):
                 source_id=int(p['id'])
             else:
                 source_id=c.execute('insert into sources(name,kind,url,priority,enabled,interval_hours,next_update) values(?,?,?,?,?,?,?)',(*vals,interval,due)).lastrowid
+            version=old['version'] if old and (old['kind'],old['url'],old['enabled'])==(p['kind'],url,enabled) else uuid.uuid4().hex
+            c.execute('update sources set version=? where id=?',(version,source_id))
+            if queue_refresh:
+                enqueue_source_refresh(c,source_id,version)
         elif kind=='restore-routes':
             c.execute('begin immediate')
             restore_hidden_routes(c,p.get('scope'),p.get('owner'),p.get('targets'))
@@ -1089,6 +1190,7 @@ def edit(kind,p):
             else:
                 c.execute('delete from hidden_items where kind=? and name=? and url=?',key)
         elif kind=='delete':
+            c.execute('delete from source_refresh_queue where source_id=?',(int(p['id']),))
             c.execute('delete from eit_events where source_id=?',(int(p['id']),))
             c.execute('delete from playlist_epg where source_id=?',(int(p['id']),))
             c.execute('delete from sources where id=?',(int(p['id']),))
@@ -1168,6 +1270,8 @@ def edit(kind,p):
                     raise ValueError('请直接指向最终频道；先解除已有别名链')
             c.execute('insert or replace into rules values(?,?)',(name,encode(value)))
         else: raise ValueError('未知操作')
+    if kind in ('source','source-state','delete'):
+        with LOCK:job['revision']+=1
     if warm_logos:request_logo_warm()
     elif kind in ('source','source-state','delete','channel','channel-logo','channels','hide-channels','visibility','hide-routes','restore-routes'):
         request_logo_warm(only_missing=True)

@@ -1,5 +1,5 @@
 """Saved detection selection, environment precedence and scheduler dispatch."""
-import tempfile,os,json
+import tempfile,os
 from pathlib import Path
 from unittest.mock import patch
 import service
@@ -8,6 +8,9 @@ from verify_dual_schedule import GOOD
 def main():
  with tempfile.TemporaryDirectory() as folder,patch.object(service,'DATA',Path(folder)),patch.dict(os.environ,{'IPTV_PROBE_WORKERS':'2'}):
   service.init()
+  with service.db() as c:
+   c.execute("insert into sources(name,kind,enabled,priority,items) values('fixture','playlist',1,1,?)",
+             (service.encode([dict(name='Fixture',url='http://fixture.test/a',attrs={},options=[])]),))
   def read():
    with service.db() as c:return service.config(c)
   assert read()['probe_workers']==2 # legacy unsaved environment fallback

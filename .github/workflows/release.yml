@@ -2,131 +2,109 @@ name: 验证并发布正式版本
 on:
   push:
     branches: [main]
-    paths: ['.github/release-version']
+    paths: ['.github/release-version', '.github/release-validation.json']
   workflow_dispatch:
     inputs:
       tag:
-        description: 要验证并发布的稳定版本（例如 v1.1.1）
+        description: 已验证的稳定版本
         required: true
         type: string
-      overwrite:
-        description: 验证通过后覆盖同名 Release、标签及镜像（仅明确要求覆盖时启用）
-        type: boolean
-        default: false
-
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: iptv-release
   cancel-in-progress: false
-
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 25
     permissions:
       contents: write
+      actions: read
     env:
       IMAGE: talktoo/iptv-studio
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
+      EVENT_TAG: ${{ inputs.tag }}
     steps:
       - uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - name: 核对版本与发布凭证
-        env:
-          EVENT_TAG: ${{ inputs.tag }}
-          OVERWRITE: ${{ inputs.overwrite }}
-          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: 核对候选验证与代码一致性
         run: |
           set -euo pipefail
-          tag="${EVENT_TAG:-$(head -n 1 .github/release-version)}"
-          [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-          [[ -n "$HUB_TOKEN" ]] || { echo '::error::缺少 DOCKERHUB_TOKEN 发布凭证'; exit 1; }
-          test -f "docs/release-notes-$tag.md"
-          if sha=$(gh api "repos/$GH_REPO/git/ref/tags/$tag" --jq .object.sha 2>/dev/null); then
-            [[ "$sha" == "$(git rev-parse HEAD)" || "$OVERWRITE" == "true" ]] || { echo '::error::版本标签已指向其他提交'; exit 1; }
-          fi
-          python3 scripts/docker_hub.py check
-          echo "TAG=$tag" >> "$GITHUB_ENV"
-          echo "OVERWRITE=${OVERWRITE:-false}" >> "$GITHUB_ENV"
-          echo "OUT=$RUNNER_TEMP/iptv-release" >> "$GITHUB_ENV"
-      - name: 安装测试用解码器
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
-      - name: 验证全部隔离回归
-        env:
-          PYTHONDONTWRITEBYTECODE: '1'
-        run: python3 scripts/verify_release.py
-      - name: 生成精简运行包与虚构数据演示
+          python3 - <<'PY'
+          import json,os,re
+          from pathlib import Path
+          record=json.loads(Path('.github/release-validation.json').read_text())
+          tag=os.environ.get('EVENT_TAG') or Path('.github/release-version').read_text().splitlines()[0]
+          assert re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+',tag) and tag==record['tag']
+          assert re.fullmatch(r'[0-9a-f]{40}',record['source_sha']) and type(record['run_id']) is int
+          with open(os.environ['GITHUB_ENV'],'a') as f:
+              f.write(f"TAG={tag}\nVERIFIED_SHA={record['source_sha']}\nVERIFIED_RUN={record['run_id']}\n")
+          PY
+      - name: 取得通过完整回归的同一份压缩镜像
         run: |
-          python3 scripts/package_release.py "$TAG" "$OUT"
-          python3 scripts/build_demo.py
-      - name: 构建并验证 linux/amd64 镜像
+          set -euo pipefail
+          gh api "repos/$GH_REPO/actions/runs/$VERIFIED_RUN" > /tmp/run.json
+          python3 - <<'PY'
+          import json,os
+          r=json.load(open('/tmp/run.json'))
+          assert r['conclusion']=='success' and r['head_sha']==os.environ['VERIFIED_SHA']
+          assert r['path'].split('@')[0]=='.github/workflows/release-candidate.yml'
+          PY
+          git merge-base --is-ancestor "$VERIFIED_SHA" HEAD
+          mapfile -t runtime < <(sed -n 's/^!//p' .dockerignore)
+          git diff --exit-code "$VERIFIED_SHA" HEAD -- .dockerignore "${runtime[@]}" scripts 'verify*'
+          gh run download "$VERIFIED_RUN" --name release-candidate --dir /tmp/candidate
+          test "$(cat /tmp/candidate/VERIFIED_SOURCE)" = "$VERIFIED_SHA"
+          cd /tmp/candidate
+          sed 's@ .*/gzip-9.tar@  gzip-9.tar@' IMAGE_SHA256SUMS | sha256sum -c -
+          sha256sum -c SHA256SUMS
+      - name: 再验压缩镜像
         run: |
-          docker build --platform linux/amd64 --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" --label "org.opencontainers.image.version=$TAG" --label "org.opencontainers.image.licenses=GPL-3.0-only" -t "$IMAGE:$TAG" "$OUT/context"
-          python3 scripts/smoke_image.py "$IMAGE:$TAG" "$OUT/context"
-      - name: 验证镜像内全部隔离回归
-        run: |
-          docker run --init --rm --network none --mount "type=bind,source=$GITHUB_WORKSPACE,target=/verify,readonly" --workdir /verify -e PYTHONDONTWRITEBYTECODE=1 "$IMAGE:$TAG" python3 scripts/verify_release.py
-      - name: 保存已验证的运行包
-        uses: actions/upload-artifact@v4
-        with:
-          name: verified-runtime-${{ env.TAG }}
-          path: |
-            ${{ env.OUT }}/iptv-studio-*.zip
-            ${{ env.OUT }}/SHA256SUMS
-          retention-days: 14
-      - name: 推送已验证的版本镜像
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends skopeo
+          skopeo copy oci-archive:/tmp/candidate/gzip-9.tar "docker-daemon:$IMAGE:$TAG"
+          python3 scripts/package_release.py "$TAG" /tmp/package-check
+          python3 scripts/smoke_image.py "$IMAGE:$TAG" /tmp/package-check/context
+      - name: 发布压缩版本镜像并拉取复核
         env:
           HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           set -euo pipefail
-          printf '%s' "$HUB_TOKEN" | docker login -u talktoo --password-stdin
-          trap 'docker logout >/dev/null' EXIT
-          expected=$(docker image inspect "$IMAGE:$TAG" --format '{{.Id}}')
-          docker push "$IMAGE:$TAG"
+          if skopeo inspect "docker://$IMAGE:$TAG" >/dev/null 2>&1; then echo '::error::版本镜像已存在，不覆盖旧版本'; exit 1; fi
+          printf '%s' "$HUB_TOKEN" | skopeo login --username talktoo --password-stdin docker.io
+          trap 'skopeo logout docker.io >/dev/null' EXIT
+          expected=$(docker inspect "$IMAGE:$TAG" --format '{{.Id}}')
+          skopeo copy --all --preserve-digests oci-archive:/tmp/candidate/gzip-9.tar "docker://$IMAGE:$TAG"
           docker image rm "$IMAGE:$TAG"
           docker pull --platform linux/amd64 "$IMAGE:$TAG"
-          test "$expected" = "$(docker image inspect "$IMAGE:$TAG" --format '{{.Id}}')"
-          docker buildx imagetools inspect "$IMAGE:$TAG"
-          python3 scripts/smoke_image.py "$IMAGE:$TAG" "$OUT/context"
-      - name: 发布已验证的 GitHub Release
+          test "$expected" = "$(docker inspect "$IMAGE:$TAG" --format '{{.Id}}')"
+          python3 scripts/smoke_image.py "$IMAGE:$TAG" /tmp/package-check/context
+      - name: 发布中文 Release 与精简运行包
         run: |
           set -euo pipefail
-          if [[ "$OVERWRITE" == "true" ]]; then
-            gh api --method PATCH "repos/$GH_REPO/git/refs/tags/$TAG" -f "sha=$(git rev-parse HEAD)" -F force=true >/dev/null
-          fi
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" == true || "$OVERWRITE" == "true" ]] || { echo '::error::正式版本已发布，不覆盖现有文件'; exit 1; }
-          else
-            gh release create "$TAG" --draft --target "$(git rev-parse HEAD)" --title "频谱 IPTV Studio $TAG" --notes-file "docs/release-notes-$TAG.md"
-          fi
-          gh release upload "$TAG" "$OUT"/iptv-studio-*.zip "$OUT/SHA256SUMS" --clobber
-          gh release edit "$TAG" --draft=false --latest --notes-file "docs/release-notes-$TAG.md"
-      - name: 更新 Docker Hub latest 标签
+          if gh release view "$TAG" >/dev/null 2>&1; then echo '::error::Release 已存在，不覆盖旧版本'; exit 1; fi
+          gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "频谱 IPTV Studio $TAG" --notes-file "docs/release-notes-$TAG.md"
+          gh release upload "$TAG" /tmp/candidate/iptv-studio-*.zip /tmp/candidate/SHA256SUMS /tmp/candidate/COMPRESSION.json
+          gh release edit "$TAG" --draft=false --latest
+      - name: 无重压缩同步 latest 并再次复核
         env:
           HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           set -euo pipefail
-          [[ "$(gh release view --json tagName --jq .tagName)" == "$TAG" ]]
-          printf '%s' "$HUB_TOKEN" | docker login -u talktoo --password-stdin
-          trap 'docker logout >/dev/null' EXIT
-          docker tag "$IMAGE:$TAG" "$IMAGE:latest"
-          docker push "$IMAGE:latest"
-          docker buildx imagetools inspect "$IMAGE:latest"
-      - name: 同步 Docker Hub 中文项目说明
-        id: hub_description
-        continue-on-error: true
-        env:
-          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: python3 scripts/docker_hub.py update
-      - name: 提示 Docker Hub 说明权限不足
-        if: steps.hub_description.outcome == 'failure'
-        run: echo '::warning::镜像与 Release 已发布，但 Docker Hub 说明未同步；请通过仓库管理账号手动保存 docs/dockerhub.md 的部署说明。'
+          printf '%s' "$HUB_TOKEN" | skopeo login --username talktoo --password-stdin docker.io
+          trap 'skopeo logout docker.io >/dev/null' EXIT
+          skopeo copy --all --preserve-digests "docker://$IMAGE:$TAG" "docker://$IMAGE:latest"
+          version_digest=$(skopeo inspect --raw "docker://$IMAGE:$TAG" | sha256sum | cut -d' ' -f1)
+          latest_digest=$(skopeo inspect --raw "docker://$IMAGE:latest" | sha256sum | cut -d' ' -f1)
+          test "$version_digest" = "$latest_digest"
+          docker pull --platform linux/amd64 "$IMAGE:latest"
+          test "$(docker inspect "$IMAGE:$TAG" --format '{{.Id}}')" = "$(docker inspect "$IMAGE:latest" --format '{{.Id}}')"
+          python3 scripts/smoke_image.py "$IMAGE:latest" /tmp/package-check/context

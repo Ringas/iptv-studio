@@ -1,0 +1,68 @@
+name: 验证正式候选与镜像压缩
+on:
+  push:
+    branches: ['verify/release-gzip-*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      OUT: /tmp/iptv-release-candidate
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 准备精简运行包和验证工具
+        run: |
+          set -euo pipefail
+          tag=$(head -n1 .github/release-version)
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
+          python3 scripts/package_release.py "$tag" "$OUT"
+          python3 scripts/build_demo.py
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends skopeo
+          docker pull moby/buildkit:buildx-stable-1
+          echo "BUILDKIT_IMAGE=$(docker inspect moby/buildkit:buildx-stable-1 --format '{{index .RepoDigests 0}}')" >> "$GITHUB_ENV"
+      - name: 独立构建默认 gzip 与 gzip9 对照
+        run: |
+          set -euo pipefail
+          for level in 6 9; do
+            builder="iptv-gzip-$level"
+            docker buildx create --name "$builder" --driver docker-container --driver-opt "image=$BUILDKIT_IMAGE"
+            docker buildx build --builder "$builder" --platform linux/amd64 --progress plain --provenance=mode=min --build-arg "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" --label "org.opencontainers.image.revision=$GITHUB_SHA" --label "org.opencontainers.image.version=$TAG" --label 'org.opencontainers.image.licenses=GPL-3.0-only' -t "talktoo/iptv-studio:$TAG" --output "type=oci,dest=$OUT/gzip-$level.tar,compression=gzip,compression-level=$level,force-compression=true,rewrite-timestamp=true" "$OUT/context" > "$OUT/build-gzip-$level.log" 2>&1
+          done
+      - name: 逐层证明压缩无损并统计体积
+        run: |
+          python3 verify_image_compression.py
+          python3 scripts/verify_image_compression.py "$OUT/gzip-6.tar" "$OUT/gzip-9.tar" "$OUT/COMPRESSION.json"
+          (cd "$OUT" && sha256sum COMPRESSION.json >> SHA256SUMS)
+          skopeo copy "oci-archive:$OUT/gzip-9.tar" "docker-daemon:talktoo/iptv-studio:$TAG"
+      - name: 验证压缩镜像启动和完整隔离回归
+        run: |
+          set -euo pipefail
+          python3 scripts/smoke_image.py "talktoo/iptv-studio:$TAG" "$OUT/context" > "$OUT/smoke.log" 2>&1
+          docker run --init --rm --network none --mount "type=bind,source=$GITHUB_WORKSPACE,target=/verify,readonly" --workdir /verify "talktoo/iptv-studio:$TAG" python3 scripts/verify_release.py > "$OUT/regression.log" 2>&1
+          printf '%s' "$GITHUB_SHA" > "$OUT/VERIFIED_SOURCE"
+          cd "$OUT"
+          sha256sum gzip-9.tar > IMAGE_SHA256SUMS
+      - name: 保存可直接发布的验证产物
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate
+          path: |
+            /tmp/iptv-release-candidate/gzip-9.tar
+            /tmp/iptv-release-candidate/*.log
+            /tmp/iptv-release-candidate/COMPRESSION.json
+            /tmp/iptv-release-candidate/VERIFIED_SOURCE
+            /tmp/iptv-release-candidate/IMAGE_SHA256SUMS
+            /tmp/iptv-release-candidate/SHA256SUMS
+            /tmp/iptv-release-candidate/iptv-studio-*.zip
+          retention-days: 7

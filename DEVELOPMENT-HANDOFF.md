@@ -48,3 +48,5 @@ Python 3.10+、Node.js 22+、FFmpeg。先阅读 README.md 和上述研究记录�
 - 周检内容缓存替代 6h 地址缓存：index.json 以 URL 哈希定位内容 SHA256，内容哈希由归一化尺寸及 RGBA 像素组成；originals/ 保存去重原图，content-* 保存模式结果。来源每 7 天核验，未变不重写图片；失败退避 1h 保留旧图。新渲染成功后才释放 previous 内容引用。prune_cache 按当前目录引用清理，不触碰数据库原始上传。scheduler 每 5min 检查到期工作，独立于订阅计划且不打断已有台标任务。旧缓存优先服务前台，后台 migrate=True 补索引。verify_logo_weekly.py / verify_logo_lifecycle.py 覆盖边界、删除竞态、失败保留和调度。
 
 - 2026-11-18 增量清理：以包含全部待提交功能的 a33f699 为基线，清理源码 33c151f。删除无入口旧 CSS、测试专用旧包装；裁剪 Python 文档主题/演示及编译产物。两版各 57 项镜像回归、17 组业务快照、33 组交替实际探测通过；3193 个保留运行文件/链接一致，仅额外删 31 文件 797586 字节，Docker 同机统计 88528576→88311326 字节。详见 docs/maintenance-cleanup-20261118.md。cleanup-verify.yml 与 publish-verified-image.yml 保存并发布同一验证归档，源代码或构建文件变化时拒绝复用。
+
+- 订阅编辑解耦：sources.version 与 source_refresh_queue 保存代际及去重持久化待更新项；API 保存与入队同事务，任务收尾后无空闲间隙衔接。旧更新在下载前/提交时校验代际，旧检测在执行前/回写时校验源归属版本及可见性，不影响未变更源。停用/删除取消队列，显式保存停用源仍可更新但不发布。预览也恢复显式队列，定时任务仍暂停。verify_source_queue.py 覆盖迁移、持久化、合并、取消、删除重建、过时 EPG/台标和检测回写；verify_source_refresh.py 覆盖 HTTP 与忙碌表单。

@@ -70,9 +70,10 @@ with tempfile.TemporaryDirectory() as folder,patch.object(service,'DATA',Path(fo
    api('source',{'id':ids['A'],'name':'A saved','kind':'playlist','url':origin+'/slow-fail','priority':10,'interval_hours':0})
    assert Source.entered.wait(2)
    assert row(ids['A'])['items']==old,'saving removed the old snapshot before fetching'
-   reject('job',{'action':'refresh','source_id':ids['A']})
-   reject('source',{'name':'blocked','kind':'logo','url':origin+'/logo','priority':10})
-   assert len(api('state')['sources'])==4
+   assert api('job',{'action':'refresh','source_id':ids['A']})['refresh_queued']
+   queued=api('source',{'name':'queued','kind':'logo','url':origin+'/logo','priority':10,'interval_hours':0})
+   assert queued['refresh_queued']
+   assert len(api('state')['sources'])==5
    Source.release.set();wait();assert row(ids['A'])['items']==old and '失败' in row(ids['A'])['last']
    # A disabled feed may be explicitly refreshed but must stay disabled.
    api('source-state',{'id':ids['B'],'enabled':False});before=Source.hits.copy()
@@ -99,11 +100,20 @@ const buttons=[button(1),button(2)];buttons.forEach(b=>b.classList.owner=b);
 const newSource={},edit={},ctx=vm.createContext({busy:true,refreshingSources:new Set(),$:()=>newSource,document:{querySelectorAll:q=>q==='[data-feed]'?[edit]:buttons}});
 vm.runInContext(source.slice(source.indexOf('function syncSourceActions('),source.indexOf('async function status()')),ctx);
 ctx.syncSourceActions({action:'refresh',source_id:2,active_source_id:2});
-assert(buttons.every(b=>b.disabled));assert(!buttons[0].classes.has('is-updating')&&buttons[1].classes.has('is-updating'));assert.equal(buttons[1].innerHTML,'<svg>refresh</svg>');assert(newSource.disabled&&edit.disabled);
+assert(!buttons[0].disabled&&buttons[1].disabled);assert(!buttons[0].classes.has('is-updating')&&buttons[1].classes.has('is-updating'));assert.equal(buttons[1].innerHTML,'<svg>refresh</svg>');assert(!newSource.disabled&&!edit.disabled);
 ctx.busy=false;ctx.syncSourceActions({action:'refresh',source_id:2});assert(buttons.every(b=>!b.disabled&&!b.classes.has('is-updating')));
 ctx.busy=true;ctx.syncSourceActions({action:'scheduled',active_source_id:1});assert(buttons[0].classes.has('is-updating')&&!buttons[1].classes.has('is-updating'));
 ctx.syncSourceActions({action:'scheduled',active_source_id:1,probing:true});assert(buttons.every(b=>!b.classes.has('is-updating')));
+ctx.syncSourceActions({action:'probe',probing:true,queued_sources:[1]});assert(buttons[0].disabled&&!buttons[1].disabled);
 assert(source.includes('return api(\'source\''));
-console.log('通过：单源刷新图标、目标旋转状态、互斥禁用与完成恢复。');
+console.log('通过：单源刷新图标、排队禁用、编辑可用与完成恢复。');
+"""],check=True)
+subprocess.run(['node','-e',r"""
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+const text=fs.readFileSync('ui.js','utf8'),editor={dataset:{}},fields={firstElementChild:{}},dialog={open:true,close(){this.open=false}},elements={editor,fields,dialog,channelEdit:{hidden:true},channelSettings:{disabled:true}};
+let calls=0,release,message='';const wait=new Promise(resolve=>release=resolve);
+const ctx=vm.createContext({$:id=>elements[id],safely:fn=>fn,editing:async()=>{calls++;await wait;return {refresh_queued:true}},status:async()=>{},reload:async()=>{},notice:text=>message=text});
+vm.runInContext(text.slice(text.indexOf("$('editor').onsubmit="),text.indexOf('let settingsDirty=')),ctx);
+(async()=>{const event={preventDefault(){},target:editor,currentTarget:editor};const first=editor.onsubmit(event);await editor.onsubmit(event);assert.equal(calls,1);release();await first;assert.equal(editor.dataset.saving,'false');assert(message.includes('当前任务结束后更新'));assert(!dialog.open);console.log('通过：任务中订阅表单可保存、保存期间防重复提交与排队提示。')})().catch(error=>{console.error(error);process.exitCode=1});
 """],check=True)
 print('通过：三类订阅保存后自动单独更新、目标隔离、停用源不启用、重复请求互斥、旧快照兜底、错误目标拒绝、不触发测速。')

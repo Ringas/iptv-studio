@@ -12,7 +12,7 @@ import threading
 import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from urllib.parse import urlsplit,parse_qs
-from service import ROOT,DATA,LOCK,job,init,db,config,catalog,epg,selected,edit,start,scheduler,stop_probe
+from service import ROOT,DATA,LOCK,job,init,db,config,catalog,epg,selected,edit,start,scheduler,stop_probe,drain_refresh_queue,queue_source_refresh
 from catalog import export,xmltv_stamp
 from catalog import xmlroot
 import webplay
@@ -184,14 +184,23 @@ class Handler(BaseHTTPRequestHandler):
                     linked={}
                     for row in c.execute('select source_id,url from playlist_epg order by rowid'):
                         linked.setdefault(row['source_id'],[]).append(row['url'])
-                    for source in sources:source['guide_urls']=linked.get(source['id'],[])
+                    with LOCK:
+                        pending={r['source_id']:r['version'] for r in c.execute('select source_id,version from source_refresh_queue')}
+                        updating=job.get('running') and not job.get('probing')
+                        active_source=job.get('active_source_id'),job.get('active_source_version')
+                    for source in sources:
+                        source['guide_urls']=linked.get(source['id'],[])
+                        version=pending.get(source['id'])
+                        source['pending_update']=bool(version and not (updating and active_source==(source['id'],version)))
                     res={'logo_cache_revision':logo_cache_rev,'timezone':runtime_timezone().key,'preview':os.getenv('STUDIO_PREVIEW')=='1','settings':settings,'channels':channels,'exported':len(active),'lines':sum(len(ch['lines']) for ch in active),
                          'sources':sources,'password_mode':'deployment' if PASSWORD else 'enabled' if c.execute('select 1 from admin_access').fetchone() else 'off',
                          'hidden_groups':hidden_groups,'hidden_channels':hidden_channels,
                          'hidden':hidden_items,
                          'rules':{r[0]:json.loads(r[1]) for r in c.execute('select * from rules')}}
                 elif path=='/api/status':
-                    with LOCK: current=job.copy()
+                    with LOCK:
+                        current={k:v for k,v in job.items() if not k.startswith('_')}
+                    current['queued_sources']=[r['source_id'] for r in c.execute('select source_id from source_refresh_queue order by queued,source_id')]
                     res={'job':current,'logo_cache_revision':cache_revision(DATA/'logo-cache'),'logo_optimization':logo_status(),'logo_beauty':config(c).get('logo_beauty','off'),'log_id':c.execute('select max(id) from logs').fetchone()[0]}
                     if 'compact' not in parse_qs(url.query):
                         res['logs']=[dict(r) for r in c.execute('select id,ts,message from logs order by id desc limit 25')]
@@ -260,15 +269,20 @@ class Handler(BaseHTTPRequestHandler):
                         c.execute('insert or replace into admin_access values(1,?,?)',(salt,verifier))
                     else:
                         c.execute('delete from admin_access')
-            elif self.path=='/api/job': start(payload['action'],payload.get('url'),payload.get('urls'),payload.get('source_id'))
+            elif self.path=='/api/job':
+                if payload['action']=='refresh' and payload.get('source_id') is not None:
+                    if payload.get('url') is not None or payload.get('urls') is not None:raise ValueError('请选择一个有效订阅进行更新')
+                    started=queue_source_refresh(payload['source_id'])
+                    self.send(200,json.dumps({'ok':True,'refresh_started':started,'refresh_queued':not started}),'application/json');return
+                start(payload['action'],payload.get('url'),payload.get('urls'),payload.get('source_id'))
             elif self.path=='/api/stop-probe': stop_probe(payload.get('run_id'),payload.get('url'))
             elif self.path=='/api/source':
                 # Commit the saved source before the worker reads it; reserve the task
                 # under the same lock so a scheduler tick cannot take its slot.
                 with LOCK:
-                    source_id=edit('source',payload)
-                    start('refresh',source_id=source_id)
-                self.send(200,json.dumps({'ok':True,'source_id':source_id,'refresh_started':True}),'application/json');return
+                    source_id=edit('source',payload,queue_refresh=True)
+                    started=drain_refresh_queue()==source_id
+                self.send(200,json.dumps({'ok':True,'source_id':source_id,'refresh_started':started,'refresh_queued':not started}),'application/json');return
             elif self.path in ('/api/clear-logs','/api/settings','/api/source-state','/api/delete','/api/channel','/api/channel-logo','/api/channels','/api/route','/api/routes','/api/hide-routes','/api/restore-routes','/api/hide-channels','/api/visibility'):
                 edit(self.path.split('/')[-1],payload)
             else:
@@ -291,5 +305,6 @@ if __name__=='__main__':
     server=ThreadingHTTPServer((HOST,PORT),Handler)
     if os.getenv('STUDIO_PREVIEW')!='1':
         threading.Thread(target=scheduler,daemon=True).start()
+    drain_refresh_queue()
     event('server.started',f'频谱已启动，访问 http://{HOST}:{PORT}',listen=f'http://{HOST}:{PORT}',scheduler=os.getenv('STUDIO_PREVIEW')!='1',log_level=os.getenv('IPTV_LOG_LEVEL','INFO'),log_format=os.getenv('IPTV_LOG_FORMAT','text'))
     server.serve_forever()
