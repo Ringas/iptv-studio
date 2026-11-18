@@ -633,3 +633,116 @@ body{background:var(--canvas)}
 }
 
 .subscribe svg{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+
+/* 美化台标已由服务端统一为 300×180，所有视图共用同一图像。 */
+body[data-logo-beauty="light"] .station-mark,body[data-logo-beauty="dark"] .station-mark{width:60px;height:36px;border-radius:7px}
+body[data-logo-beauty="light"] .logo-frame,body[data-logo-beauty="dark"] .logo-frame{width:44px;height:27px;border-radius:5px}
+body[data-logo-beauty="light"] .station-mark img,body[data-logo-beauty="dark"] .station-mark img{padding:0}
+body[data-logo-beauty="light"] .station-mark,body[data-logo-beauty="light"] .station-mark img,body[data-logo-beauty="light"] .logo-frame{background:#edf1f6}
+body[data-logo-beauty="dark"] .station-mark,body[data-logo-beauty="dark"] .station-mark img,body[data-logo-beauty="dark"] .logo-frame{background:#252a32;border-color:#343b46}
+.logo-icon{color:#8063bd;background:#f3effa}
+
+.feed-bottom{flex-wrap:wrap}.feed-bottom>small{flex:1 1 160px;min-width:0}.feed-actions{display:flex;align-items:center;gap:8px;flex:none;margin-left:auto}.feed-actions button{white-space:nowrap}
+
+.source-refresh{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;padding:7px;flex:none}.source-refresh svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.source-refresh.is-updating svg{animation:source-refresh-spin 1s linear infinite}@keyframes source-refresh-spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.source-refresh.is-updating svg{animation:none}}
+
+/* Shared button system: 36px regular, 32px compact, 28px inline controls. */
+:root{--control-height:36px;--control-compact:32px;--control-small:28px;--control-radius:8px;--control-gap:8px;--control-icon:16px}
+.page-heading .actions,.feed-actions,.route-controls,.policies,.detail-edit-actions,.source-editor-footer>div,.bar .actions,.task-actions,.bulk-actions{align-items:center;gap:var(--control-gap)}
+:where(.page-heading .actions,.feed-actions,.source-editor-footer,.detail-edit-actions,.route-controls,.policies,.task-actions,.bulk-actions,.log-tools,.hidden-selection) button:not(.state-switch),
+:where(.bar) > button,:where(.bar .actions,.bar form)>button,#apply,#savePassword,.pref-save button,.source-empty>button,#resetSearch,#openLogs,.hidden-heading>button,.hidden-route>button{
+ display:inline-flex;align-items:center;justify-content:center;gap:6px;box-sizing:border-box;
+ height:var(--control-height);min-height:var(--control-height);padding:0 12px;
+ font-size:13px;font-weight:550;line-height:20px;border-radius:var(--control-radius);white-space:nowrap;vertical-align:middle
+}
+/* Primary and secondary buttons share geometry, with colour conveying priority. */
+:where(.feed-actions,.source-editor-footer,.detail-edit-actions,.route-controls,.policies,.log-tools,.hidden-selection) button:not(.primary,.state-switch,.play-route,.source-delete,[data-stop-all]){
+ background:var(--surface);border:1px solid var(--button-edge);color:var(--ink)
+}
+:where(.feed-actions,.source-editor-footer,.detail-edit-actions,.route-controls,.policies,.log-tools,.hidden-selection) button:not(.primary,.state-switch,.play-route,.source-delete,[data-stop-all]):enabled:hover{
+ background:var(--tint);border-color:#aac9ec;color:var(--accent)
+}
+.feed-actions,.route-controls,.policies,.task-actions,.bulk-actions,.log-tools,.hidden-selection{--control-height:var(--control-compact)}
+.feed-actions>button,.source-refresh{height:var(--control-compact);min-height:var(--control-compact)}
+.feed-actions>.source-refresh{width:var(--control-compact);padding:0}
+.source-refresh svg,.subscribe svg{width:var(--control-icon);height:var(--control-icon);display:block;flex:none}
+.route-controls>button:not(.state-switch),.policies>button:not(.state-switch){height:var(--control-compact);min-height:var(--control-compact);padding:0 6px;font-size:12px;line-height:18px}
+.route-controls,.policies{gap:6px}
+button.state-switch{height:var(--control-compact);min-height:var(--control-compact);border-radius:var(--control-radius)}
+.route-controls>.play-route,.policies>.play-route{width:var(--control-compact);flex:0 0 var(--control-compact);padding:0;border-radius:var(--control-radius)}
+.route-controls>.play-route{margin-inline-start:0}
+.route-controls>.play-route svg,.policies>.play-route svg{width:var(--control-icon);height:var(--control-icon)}
+/* Inspector headers stay compact; confirmation actions keep the regular size. */
+:where(dialog,#infoPopup)>.bar{--control-height:var(--control-compact);align-items:center}
+#editor>.bar{--control-height:var(--control-compact);align-items:center}
+.source-editor-footer,.detail-edit-actions{--control-height:36px}
+.source-editor-footer>div{align-items:center}
+#closePopup{height:var(--control-compact);min-height:var(--control-compact);padding:0 10px}
+#clearLogs,.log-tools select{height:var(--control-compact);min-height:var(--control-compact);font-size:12px;line-height:18px;border-radius:var(--control-radius)}
+.log-tools .log-filter{display:inline-flex;align-items:center;gap:var(--control-gap);margin:0;white-space:nowrap}
+.log-tools .log-filter select{display:inline-block;margin:0;padding:0 10px}
+#hiddenList .hidden-selection button,.hidden-heading>button,.hidden-route>button{height:var(--control-compact);min-height:var(--control-compact);padding:0 10px;font-size:12px;line-height:18px;border-radius:var(--control-radius)}
+/* Toolbar controls align as a row, including the segmented view switch. */
+.catalog-tools .search-box input[type=search],.catalog-tools.is-compact .search-box input[type=search],.catalog-tools #group,.catalog-tools.is-compact #group{
+ height:var(--control-compact);min-height:var(--control-compact);padding-block:0;font-size:12px;line-height:18px;border-radius:var(--control-radius)
+}
+.catalog-tools .filters>button,.catalog-tools.is-compact .filters>button{height:var(--control-compact);min-height:var(--control-compact);padding:0 10px;font-size:12px;line-height:18px;border-radius:var(--control-radius);display:inline-flex;align-items:center;justify-content:center}
+.catalog-tools .view-switch,.catalog-tools.is-compact .view-switch{height:var(--control-compact);padding:3px;border-radius:var(--control-radius);align-items:center;gap:0}
+.catalog-tools .view-switch button,.catalog-tools.is-compact .view-switch button{height:26px;min-height:26px;padding:0 8px;font-size:12px;line-height:18px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center}
+.group-actions{gap:4px}
+.group-head .group-actions>button,.group-head .group-health button{height:var(--control-small);min-height:var(--control-small);padding-block:0;line-height:18px;border-radius:var(--control-radius)}
+/* Inline links and status chips retain their lightweight, content-sized form. */
+.page-heading>.subscribe{height:var(--control-height);min-height:var(--control-height);padding:0 14px;line-height:20px;border-radius:var(--control-radius);justify-content:center}
+.channel-card button.card-hide{width:var(--control-compact);height:var(--control-compact);flex-basis:var(--control-compact);padding:0;margin-top:0;border-radius:var(--control-radius)}
+.channel-card button.card-hide svg{width:var(--control-icon);height:var(--control-icon)}
+.channel-card .play-route{width:var(--control-compact);height:var(--control-compact);flex-basis:var(--control-compact);padding:0}
+.channel-card .play-route svg{width:var(--control-icon);height:var(--control-icon)}
+.studio-shell>.bulk{align-items:center;gap:var(--control-gap)}
+.studio-shell>.bulk :is(#selectVisible,#clearPicks),.studio-shell>.bulk .bulk-actions>button{height:var(--control-compact);min-height:var(--control-compact);padding-block:0;line-height:18px;border-radius:var(--control-radius)}
+.studio-shell>.bulk #bulkDone{width:var(--control-compact);height:var(--control-compact);min-height:var(--control-compact);padding:0;border-radius:var(--control-radius)}
+#bulkDone svg{width:var(--control-icon);height:var(--control-icon)}
+#playerLine,#closePlayer,#retryPlayer{height:var(--control-compact);min-height:var(--control-compact);border-radius:var(--control-radius)}
+#closePlayer{width:var(--control-compact);padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:24px;line-height:1}
+#retryPlayer{padding:0 10px;font-size:12px;line-height:18px}
+#playerDialog .player-feedback{align-items:center;min-height:46px}
+.pref-row select,.number-unit{height:var(--control-height);min-height:var(--control-height);box-sizing:border-box}
+.source-delete{color:#ac2b3e}
+@media(max-width:720px){.page-heading .actions button{padding-inline:10px;font-size:12px}.source-editor-footer{gap:var(--control-gap)}.source-editor-footer button{padding-inline:10px;font-size:12px}}
+
+.route-controls>[data-test],.policies>[data-test]{color:var(--accent);border-color:var(--button-edge);background:var(--surface)}
+#clearLogs,button[data-stop-all]{color:#a52d3b}
+#clearLogs:enabled:hover,.source-editor-footer .source-delete:enabled:hover,button[data-stop-all]:enabled:hover{color:#a52d3b;border-color:#e6b8c0;background:#fff2f3}
+
+/* Keep the primary route switch centred even when hover actions wrap. */
+.control-cell .policies{position:relative;display:flex;align-items:center;align-content:center;flex-wrap:wrap;min-height:var(--control-compact);padding-inline-start:92px;gap:4px 2px;margin-top:0}
+.control-cell .policies>.state-switch{position:absolute;left:0;top:50%;transform:translateY(-50%);width:88px;margin:0}
+.control-cell .policies>[data-test]{order:0;min-width:var(--control-compact);padding-inline:0}
+.control-cell .policies>.play-route{order:1;margin-inline-start:0}
+.control-cell .policies>.hide-item{order:2;min-width:var(--control-compact);padding-inline:0}
+
+#hiddenList .hidden-parent>.hidden-row>button{display:inline-flex;align-items:center;justify-content:center;height:var(--control-compact);min-height:var(--control-compact);padding:0 10px;font-size:12px;line-height:18px;border-radius:var(--control-radius)}
+
+@media(max-width:460px){.page-heading:has(>.actions){flex-wrap:wrap;gap:12px}.page-heading>.actions{max-width:none;width:100%;flex-wrap:nowrap;justify-content:flex-start}.page-heading>.actions>button{flex:0 0 auto}}
+
+body[data-logo-beauty="transparent"] .station-mark{width:60px;height:36px;border-radius:7px}body[data-logo-beauty="transparent"] .logo-frame{width:44px;height:27px;border-radius:5px}body[data-logo-beauty="transparent"] .station-mark img{padding:0}body[data-logo-beauty="transparent"] :is(.station-mark,.station-mark img,.logo-frame){background:transparent;border-color:transparent}
+
+.route>.route-controls>.hide-item{width:32px;flex:0 0 32px;padding:0;display:inline-flex;align-items:center;justify-content:center}.route>.route-controls>.hide-item svg{width:16px;height:16px}
+@media(max-width:460px){.route>.route-controls{flex-wrap:nowrap;gap:4px}.route>.route-controls>.state-switch{width:80px;min-width:80px;gap:4px}.route>.route-controls>[data-test]{padding-inline:4px;font-size:11px}.route>.route-controls>.play-route{margin:0}}
+
+/* Reserve enough table width for one aligned action row. */
+.col-control{width:26%}.control-cell .policies{flex-wrap:nowrap;padding-inline-start:0;gap:2px}.control-cell .policies>.state-switch{position:static;transform:none;flex:0 0 88px}.control-cell .policies>.hide-item{flex:0 0 auto}
+
+/* Logo previews share one dialog across cards, tables and channel editors. */
+button.logo-preview-trigger{padding:0;cursor:zoom-in;flex:none;line-height:normal}
+.card-name button.station-mark{flex:0 0 auto;padding:0}
+.logo-preview-trigger:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+#logoPreviewDialog{width:358px;max-width:calc(100vw - 24px);box-sizing:border-box;padding:16px}
+#logoPreviewDialog .bar{gap:12px;margin-bottom:12px}
+#logoPreviewTitle{font-size:16px;overflow-wrap:anywhere;margin:0}
+#closeLogoPreview{display:inline-flex;align-items:center;justify-content:center;height:32px;min-height:32px;padding:0 12px;border-radius:8px;flex:none;white-space:nowrap}
+.logo-preview-canvas{display:grid;place-items:center;padding:12px;border-radius:10px;overflow:hidden;background-color:#f5f6f8;background-image:linear-gradient(45deg,#e4e7ec 25%,transparent 25%),linear-gradient(-45deg,#e4e7ec 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#e4e7ec 75%),linear-gradient(-45deg,transparent 75%,#e4e7ec 75%);background-size:20px 20px;background-position:0 0,0 10px,10px -10px,-10px 0}
+#logoPreviewImage{display:block;max-width:100%;height:auto;object-fit:contain;padding:0;box-sizing:border-box}
+
+#logoPreviewImage[hidden],#logoPreviewStatus:empty{display:none}#logoPreviewStatus{font-size:13px;color:var(--muted);padding:24px 12px}
+
+#logoTaskProgress:not([hidden]){display:inline-block;margin-left:8px;padding-left:8px;border-left:1px solid var(--line);font-size:11px;color:var(--muted);max-width:100%;vertical-align:baseline}

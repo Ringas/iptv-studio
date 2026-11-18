@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 const folder=await mkdtemp(join(tmpdir(),'iptv-timeout-policy-'));
 try{
  await writeFile(join(folder,'playback.mjs'),await readFile(new URL('./playback.mjs',import.meta.url)));
- await writeFile(join(folder,'media-http.mjs'),`export let calls=0;
+ await writeFile(join(folder,'media-http.mjs'),`export {responseFailure,upstreamFailureError} from ${JSON.stringify(new URL('./media-http.mjs',import.meta.url).href)};export let calls=0;
 export function reset(){calls=0;}
 export async function mediaFetch(){calls++;
  const kind=process.env.FIXTURE_FAULT;

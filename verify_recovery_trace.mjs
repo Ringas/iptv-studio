@@ -14,7 +14,7 @@ try{
  };
  for(const [name,seconds] of [['normal',1],['initial',1.5],['tail',.925],['short',.5]])await writeFile(join(dir,name+'.ts'),make(seconds));
  await writeFile(join(dir,'clock.mjs'),`let t=100;export const now=()=>t;export function reset(){t=100;}export function advance(s){t+=s;}export async function sleep(ms){t+=ms/1000;}`);
- await writeFile(join(dir,'media-http.mjs'),`import {readFile} from 'node:fs/promises';import {advance} from './clock.mjs';
+ await writeFile(join(dir,'media-http.mjs'),`export {responseFailure,upstreamFailureError} from ${JSON.stringify(new URL('./media-http.mjs',import.meta.url).href)};import {readFile} from 'node:fs/promises';import {advance} from './clock.mjs';
 export async function mediaFetch(address){const n=Number(new URL(address).pathname.split('/').at(-1));
  advance(.001+(globalThis.fixtureCase==='closed'&&n===4?.15:0));
  const file=globalThis.fixtureCase==='tail'&&(n===2||n===3)?'initial':globalThis.fixtureCase==='tail'&&(n===24||n===25)?'tail':globalThis.fixtureCase==='tail'&&(n===10||n===11)?'short':'normal';

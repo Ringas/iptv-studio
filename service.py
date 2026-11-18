@@ -25,6 +25,7 @@ from http.client import HTTPException
 from urllib.parse import urlsplit,urljoin
 from grouping import programme_profiles
 from eit import programmes
+from logos import parse_index, image_route, cached_image, cache_is_fresh, prune_cache, cache_versions, MODES
 from catalog import classify_result, parse_playlist, playlist_guides, build, selected, guide, xmlroot, xmltv_logos, normalize, assess, speed_display, qualification_policy, policy_changed, activation_assessment
 
 ROOT=Path(__file__).resolve().parent
@@ -34,7 +35,7 @@ job={'running':False,'message':'空闲','done':0,'total':0,'active_url':None,'sa
 probe_process=None
 dual_lease_dir=None
 DEFAULT={'minutes':480,'auto_probe':True,'strict':True,'mode':'merge','next':0,
-         'probe_mode':'adaptive','criteria':'both','min_speed':100,'min_height':720}
+         'probe_mode':'adaptive','criteria':'both','min_speed':100,'min_height':720,'logo_beauty':'off'}
 
 # The same gateway can serve several subscriptions. Share its quiet period across jobs.
 gateway_windows={}
@@ -202,7 +203,23 @@ def catalog(c,hidden_groups=None,hidden_channels=None,hidden_items=None):
     hidden={tuple(r) for r in c.execute('select kind,name,url from hidden_items')}
     restored={tuple(r) for r in c.execute('select group_name,channel,url from restored_routes')}
     channel_routes={tuple(r) for r in c.execute('select channel,url from restored_channel_routes')}
-    return build(sources,tests,rules,modes,config(c),profiles,hidden,logos,restored,hidden_groups,channel_routes,hidden_channels,hidden_items)
+    subscribed={}
+    has_logos=False
+    for row in c.execute("select logos from sources where enabled and kind='logo' order by priority,id"):
+        has_logos=True
+        for key,value in json.loads(row['logos'] or '{}').items():subscribed.setdefault(key,value)
+    cfg=config(c)
+    channels=build(sources,tests,rules,modes,cfg,profiles,hidden,logos,restored,hidden_groups,channel_routes,hidden_channels,hidden_items,subscribed)
+    mode=cfg.get('logo_beauty','off')
+    versions=cache_versions([ch['logo_candidates'] for ch in channels],mode,DATA/'logo-cache')
+    for channel in channels:
+        candidates=channel['logo_candidates']
+        channel['original_logo_candidates']=candidates
+        if candidates and (has_logos or mode!='off'):
+            channel['logo']=image_route(candidates,mode)
+            if tuple(candidates) in versions:channel['logo']+='?v='+versions[tuple(candidates)]
+            channel['logo_candidates']=[channel['logo']]
+    return channels
 
 def epg(c, channels):
     events=c.execute("""select e.* from eit_events e join sources s on e.source_id=s.id
@@ -220,9 +237,9 @@ class Redirect(HTTPRedirectHandler):
         weburl(newurl)
         return super().redirect_request(req,fp,code,msg,headers,newurl)
 
-def fetch(url,limit):
+def fetch(url,limit,timeout=20):
     req=Request(weburl(url),headers={'User-Agent':'IPTV-Hub/1.0','Accept-Encoding':'gzip'})
-    with build_opener(Redirect()).open(req,timeout=20) as response:
+    with build_opener(Redirect()).open(req,timeout=timeout) as response:
         raw=response.read(limit+1)
         base=response.geturl()
     if len(raw)>limit: raise ValueError('订阅超过大小限制')
@@ -366,6 +383,10 @@ def refresh(source,attempts):
         if links:message+=f' · 自带节目单 {len(links)-len(linked_errors)}/{len(links)} 份更新成功'
         found=[] if links else collect_eit(source,items)
         if not links:message+=f' · DVB EIT 本次读取 {len(found)} 个频道，{sum(len(e) for _,_,e in found)} 条节目'
+    elif source['kind']=='logo':
+        raw,base=fetch(source['url'],4*1024*1024)
+        logo_index=parse_index(raw,base)
+        message=f'成功 · {len(set(logo_index.values()))} 个台标'
     else:
         message=f"成功 · {update_guide(source['url'],attempts)} 条"
     with db() as c:
@@ -382,7 +403,10 @@ def refresh(source,attempts):
             c.execute('delete from playlist_epg where source_id=?',(source['id'],))
             c.executemany('insert into playlist_epg values(?,?)',[(source['id'],u) for u in links])
             c.execute('update sources set items=? where id=?',(encode(items),source['id']))
+        if source['kind']=='logo':
+            c.execute('update sources set logos=? where id=?',(encode(logo_index),source['id']))
         c.execute('update sources set last=?,updated=? where id=?',(message,int(time.time()),source['id']))
+    request_logo_warm(only_missing=True)
     return {item['url'] for item in items},linked_errors
 
 def stop_probe(run_id,url=None):
@@ -498,6 +522,9 @@ def run(action,requested):
             args=()
             updated_urls=set()
             guide_attempts={}
+            if action=='refresh' and requested is not None:
+                query='select * from sources where id=?'
+                args=(requested[0],)
             if action=='scheduled':
                 query+=' and next_update between 1 and ?'
                 args=(int(time.time()),)
@@ -506,6 +533,7 @@ def run(action,requested):
             for i,s in enumerate(sources):
                 source_started=time.monotonic()
                 event('refresh.started','开始读取订阅','DEBUG',source=s['name'],source_id=s['id'],source_kind=s['kind'],url=s['url'])
+                with LOCK:job['active_source_id']=s['id']
                 progress('更新 '+s['name'],i,len(sources))
                 try:
                     urls,errors=refresh(s,guide_attempts)
@@ -633,13 +661,14 @@ def run(action,requested):
                         c.execute('insert or replace into tests values(?,?)',(u,encode(kept)))
                         log(c,'上游限流，保留原测速及启停状态','probe',**fields,result='待复测',reason=reason)
                     elif result.get('inconclusive'):
+                        if result.get('upstreamCooldown') and result.get('retryAfter'):extend_gateway(u,result['retryAfter'])
                         prior=c.execute('select result from tests where url=?',(u,)).fetchone()
                         kept=json.loads(prior[0]) if prior else {'inconclusive':True,'status':'未能验证'}
                         kept['last_attempt']={**result,'at':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime())}
                         c.execute('insert or replace into tests values(?,?)',(u,encode(kept)))
-                        if u not in retries and (result.get('retryable') or result.get('isolation_required')):
+                        if u not in retries and (result.get('retryable') or result.get('isolation_required')) and (result.get('retryAfter') or 0)<=30:
                             recheck_reasons[u]='；'.join(result.get('note',[]))[:500]
-                            retries[u]=(finished if dual and cached else time.monotonic())+(12 if result.get('httpStatus')==607 else 8)
+                            retries[u]=(finished if dual and cached else time.monotonic())+max(12 if result.get('httpStatus')==607 else 8,result.get('retryAfter') or 0)
                             event('probe.retry_scheduled','安排隔离或异常复测','WARNING',route_id=route_id(u),channel=channel,line=info.get('line'),reason=recheck_reasons[u],wait_seconds=round(max(0,retries[u]-time.monotonic()),2),isolation=bool(result.get('isolation_required')))
                             targets.append(u)
                             job['total']=len(targets)
@@ -676,7 +705,7 @@ def run(action,requested):
                                     result['grace']=True
                             if u not in retries and (needs_recheck(result,assess(previous,cfg)=='保留') or result.get('isolation_required')):
                                 recheck_reasons[u]='；'.join(result.get('note',[]))[:500]
-                                retries[u]=(finished if dual and cached else time.monotonic())+(12 if result.get('httpStatus')==607 else 8)
+                                retries[u]=(finished if dual and cached else time.monotonic())+max(12 if result.get('httpStatus')==607 else 8,result.get('retryAfter') or 0)
                                 event('probe.retry_scheduled','安排隔离或异常复测','WARNING',route_id=route_id(u),channel=channel,line=info.get('line'),reason=recheck_reasons[u],wait_seconds=round(max(0,retries[u]-time.monotonic()),2),isolation=bool(result.get('isolation_required')))
                                 targets.append(u)
                                 job['total']=len(targets)
@@ -753,12 +782,17 @@ def run(action,requested):
             if message.startswith('任务中断'):
                 with db() as c: log(c,message)
             if action in ('scheduled','refresh'):job['revision']+=1
-            job.update(running=False,message=message,probing=False,active_url=None,active_channel='',sample=None,active_lines={})
+            job.update(running=False,message=message,probing=False,active_source_id=None,active_url=None,active_channel='',sample=None,active_lines={})
 
-def start(action,url=None,urls=None):
+def start(action,url=None,urls=None,source_id=None):
     with LOCK:
         if job['running']: raise ValueError('已有任务运行中')
         if action not in ('probe','refresh','scheduled'): raise ValueError('未知任务')
+        if source_id is not None:
+            if action!='refresh' or url is not None or urls is not None or type(source_id) is not int or source_id<1:
+                raise ValueError('请选择一个有效订阅进行更新')
+            with db() as c:
+                if not c.execute('select 1 from sources where id=?',(source_id,)).fetchone():raise ValueError('订阅不存在')
         if url is not None:
             if urls is not None: raise ValueError('请只提交一组测试目标')
             urls=[url]
@@ -769,18 +803,22 @@ def start(action,url=None,urls=None):
                 available={r['url'] for ch in catalog(c) for r in ch['lines']}
             if not set(urls)<=available: raise ValueError('所选线路已变动，请刷新后重选')
             urls=list(dict.fromkeys(urls))
-        job.update(run_id=uuid.uuid4().hex,stop_line=False,stop_queue=False,probing=False,running=True,action=action,message='准备任务',done=0,total=0)
-        threading.Thread(target=run,args=(action,urls),daemon=True).start()
+        job.update(source_id=source_id,active_source_id=source_id,run_id=uuid.uuid4().hex,stop_line=False,stop_queue=False,probing=False,running=True,action=action,message='准备任务',done=0,total=0)
+        threading.Thread(target=run,args=(action,[source_id] if source_id is not None else urls),daemon=True).start()
 
 def scheduler():
     last_error=None
     last_report=0
+    next_logo_check=0
     while True:
         time.sleep(5)
         try:
             with LOCK,db() as c:
                 if not job['running'] and c.execute('select 1 from sources where enabled and next_update between 1 and ? limit 1',(int(time.time()),)).fetchone():
                     start('scheduled')
+            if time.monotonic()>=next_logo_check and not logo_status()['running']:
+                request_logo_warm(only_missing=True,quiet=True)
+                next_logo_check=time.monotonic()+300
             if last_error:event('scheduler.recovered','更新计划已恢复运行')
             last_error=None
         except Exception as exc:
@@ -820,6 +858,118 @@ def restore_hidden_routes(c,scope,owner,targets):
     else:
         c.executemany('insert into restored_routes values(?,?,?)',[(owner,n,u) for n,u in pending])
 
+# Independent, cancellable logo preparation; line detection keeps priority.
+_logo_warm_lock=threading.Lock()
+_logo_warm_thread=None
+_logo_warm_pending=None
+_logo_warm_version=0
+_logo_warm_changed=threading.Event()
+_logo_progress={'running':False,'phase':'idle','mode':'off','done':0,'total':0,'ready':0,'failed':0,'skipped':0}
+
+
+def logo_status():
+    with _logo_warm_lock:return _logo_progress.copy()
+
+
+def cleanup_logo_cache():
+    with db() as c:channels=catalog(c)
+    try:removed=prune_cache([ch['original_logo_candidates'] for ch in channels],DATA/'logo-cache')
+    except OSError as exc:
+        event('logo.cleanup_failed','台标缓存暂时无法清理，请检查数据目录权限和剩余空间','WARNING',error_type=type(exc).__name__)
+        return
+    if removed:event('logo.cache_cleaned',f'已清理 {removed} 个未使用的台标缓存文件',log_type='policy')
+
+
+def request_logo_warm(only_missing=False,quiet=False):
+    global _logo_warm_thread,_logo_warm_pending,_logo_warm_version
+    with db() as c:
+        mode=config(c).get('logo_beauty','off')
+        channels=catalog(c)
+    prune_cache([ch['original_logo_candidates'] for ch in channels],DATA/'logo-cache',cleanup=False)
+    # Several channels may share one image. Count and prepare each candidate set once.
+    unique={tuple(ch['original_logo_candidates']):ch for ch in channels if ch['original_logo_candidates']}
+    skipped=sum(not ch['original_logo_candidates'] for ch in channels)
+    if only_missing:
+        if mode=='off':
+            cleanup_logo_cache();return
+        all_count=len(unique)
+        unique={key:ch for key,ch in unique.items() if not cache_is_fresh(key,mode,DATA/'logo-cache')}
+        reused=all_count-len(unique)
+        if reused and (not quiet or unique):event('logo.cache_reused',f'台标缓存有效 · 复用 {reused} 张 · 待处理 {len(unique)} 张',log_type='policy')
+        if not unique:
+            cleanup_logo_cache();return
+    if mode=='off':unique={}
+    with _logo_warm_lock:
+        _logo_warm_version+=1
+        _logo_warm_pending=(_logo_warm_version,DATA,mode,list(unique.values()))
+        _logo_progress.update(running=mode!='off',phase='queued' if mode!='off' else 'off',mode=mode,
+                              done=0,total=len(unique),ready=0,failed=0,skipped=skipped,finished_at=0)
+        _logo_warm_changed.set()
+        if _logo_warm_thread is None:
+            _logo_warm_thread=threading.Thread(target=_prepare_logos,daemon=True)
+            _logo_warm_thread.start()
+
+
+def _prepare_logos():
+    global _logo_warm_thread,_logo_warm_pending
+    while True:
+        with _logo_warm_lock:
+            task=_logo_warm_pending;_logo_warm_pending=None
+            if task is None:
+                _logo_warm_thread=None
+                return
+        version,root,mode,channels=task
+        started=time.monotonic();done=ready=failed=0;waiting=False;failures=[]
+        label={'off':'关闭','light':'浅色','dark':'深色','transparent':'透明'}[mode]
+        if mode=='off':
+            event('logo.disabled','台标优化已关闭，保留原图样式',log_type='policy')
+            continue
+        event('logo.started',f'开始台标检查与优化 · {label} · 共 {len(channels)} 项')
+        def local(address):
+            with sqlite3.connect(root/'hub.sqlite') as connection:
+                row=connection.execute('select png from channel_logos where digest=? limit 1',(address[7:-4],)).fetchone()
+            if not row:raise ValueError('没有此上传台标')
+            return row[0]
+        for channel in channels:
+            while True:
+                with _logo_warm_lock:
+                    if version!=_logo_warm_version:break
+                    paused=bool(job.get('running') and job.get('probing'))
+                    _logo_progress['phase']='waiting' if paused else 'processing'
+                    _logo_warm_changed.clear()
+                if paused!=waiting:
+                    event('logo.waiting' if paused else 'logo.resumed',
+                          '线路检测优先，台标优化等待检测结束' if paused else '线路检测已结束，继续台标优化',log_type='policy')
+                    waiting=paused
+                if not paused:break
+                _logo_warm_changed.wait(.25)
+            with _logo_warm_lock:
+                if version!=_logo_warm_version:break
+            try:
+                cached_image(channel['original_logo_candidates'],mode,root/'logo-cache',lambda address,limit:fetch(address,limit,timeout=8),local,migrate=True)
+                ready+=1
+            except Exception as exc:
+                failed+=1
+                if len(failures)<3:failures.append(channel['name'])
+                event('logo.preparation_failed','台标暂未准备好','DEBUG',channel=channel['name'],error_type=type(exc).__name__)
+            done+=1
+            with _logo_warm_lock:
+                if version!=_logo_warm_version:break
+                _logo_progress.update(done=done,ready=ready,failed=failed)
+            if done<len(channels) and done%max(10,(len(channels)+3)//4)==0:
+                event('logo.progress',f'台标优化 · 已处理 {done}/{len(channels)} 项 · 已就绪 {ready} · 未能处理 {failed}')
+        with _logo_warm_lock:
+            current=version==_logo_warm_version
+            if current:_logo_progress.update(running=False,phase='complete',done=done,ready=ready,failed=failed,finished_at=time.time())
+        if not current:
+            event('logo.cancelled','设置已变更，停止旧台标队列并切换到最新模式',log_type='policy')
+        else:
+            if root==DATA:cleanup_logo_cache()
+            event('logo.finished',f'台标优化完成 · {label} · 已就绪 {ready}/{len(channels)} 项 · 未能处理 {failed}',
+                  elapsed_ms=round((time.monotonic()-started)*1000),log_type='summary',
+                  tip=('未能处理：'+'、'.join(failures)+'；保留兜底台标，可稍后重试') if failed else None)
+
+
 def prepare_logo(encoded):
     if not isinstance(encoded,str): raise ValueError('无效的台标文件')
     data=base64.b64decode(encoded,validate=True)
@@ -838,6 +988,8 @@ def prepare_logo(encoded):
     return proc.stdout
 
 def edit(kind,p):
+    source_id=None
+    warm_logos=False
     if kind=='channel-logo':
         image=prepare_logo(p['image']) if p['image'] is not None else None
     with LOCK,db() as c:
@@ -863,7 +1015,10 @@ def edit(kind,p):
                 raise ValueError('测速条件无效')
             if qualification_policy(cfg)!=dict(criteria=criteria,min_speed=speed,min_height=height):
                 retain_legacy_results(c,cfg)
-            cfg.update(criteria=criteria,min_speed=speed,min_height=height)
+            beauty=p.get('logo_beauty',cfg.get('logo_beauty','off'))
+            if beauty not in MODES:raise ValueError('台标优化模式无效')
+            warm_logos=beauty!='off' or beauty!=cfg.get('logo_beauty','off')
+            cfg.update(criteria=criteria,min_speed=speed,min_height=height,logo_beauty=beauty)
             if hours!=cfg['minutes']/60:
                 c.execute('update sources set next_update=? where enabled and interval_hours is null',(deadline(hours),))
             cfg.update(probe_mode=method,minutes=hours*60,mode=p['mode'],auto_probe=bool(p['auto_probe']),strict=bool(p['strict']))
@@ -878,7 +1033,7 @@ def edit(kind,p):
                 c.execute('update sources set enabled=?,next_update=? where id=?',(int(p['enabled']),deadline(hours,p['enabled']),int(p['id'])))
         elif kind=='source':
             name=p['name'].strip()
-            if not name or p['kind'] not in ('playlist','epg'): raise ValueError('请填写名称并选择类型')
+            if not name or p['kind'] not in ('playlist','epg','logo'): raise ValueError('请填写名称并选择类型')
             url=weburl(p['url'].strip())
             old=None
             if p.get('id'):
@@ -893,13 +1048,17 @@ def edit(kind,p):
             else:
                 due=deadline(config(c)['minutes']/60 if interval is None else interval,enabled)
             if old:
-                if (old['kind'],old['url'])!=(p['kind'],url):
+                if old['kind']==p['kind']=='epg' and old['url']!=url:
+                    c.execute('insert or ignore into epg_cache(url,xml,profiles,logos,programmes) select ?,xml,profiles,logos,programmes from epg_cache where url=?',(url,old['url']))
+                if old['kind']!=p['kind']:
                     c.execute('delete from eit_events where source_id=?',(p['id'],))
                     c.execute('delete from playlist_epg where source_id=?',(p['id'],))
                     c.execute("update sources set items='[]',xml=null,profiles=null,logos=null,last='',updated=0 where id=?",(p['id'],))
                 c.execute('update sources set name=?,kind=?,url=?,priority=?,enabled=?,interval_hours=?,next_update=? where id=?',(*vals,interval,due,p['id']))
                 prune_guides(c)
-            else: c.execute('insert into sources(name,kind,url,priority,enabled,interval_hours,next_update) values(?,?,?,?,?,?,?)',(*vals,interval,due))
+                source_id=int(p['id'])
+            else:
+                source_id=c.execute('insert into sources(name,kind,url,priority,enabled,interval_hours,next_update) values(?,?,?,?,?,?,?)',(*vals,interval,due)).lastrowid
         elif kind=='restore-routes':
             c.execute('begin immediate')
             restore_hidden_routes(c,p.get('scope'),p.get('owner'),p.get('targets'))
@@ -1009,3 +1168,7 @@ def edit(kind,p):
                     raise ValueError('请直接指向最终频道；先解除已有别名链')
             c.execute('insert or replace into rules values(?,?)',(name,encode(value)))
         else: raise ValueError('未知操作')
+    if warm_logos:request_logo_warm()
+    elif kind in ('source','source-state','delete','channel','channel-logo','channels','hide-channels','visibility','hide-routes','restore-routes'):
+        request_logo_warm(only_missing=True)
+    return source_id

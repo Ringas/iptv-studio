@@ -1,6 +1,6 @@
 import {spawn} from 'node:child_process';
 import {setTimeout as sleep} from 'node:timers/promises';
-import {mediaFetch} from './media-http.mjs';
+import {mediaFetch,responseFailure,upstreamFailureError} from './media-http.mjs';
 
 const now=()=>performance.now()/1000;
 const round=n=>Math.round(n*100)/100;
@@ -25,12 +25,18 @@ async function readMedia(seg,headers,sampleLimit){
   const chunks=[];
   let bytes=0,sampled=0;
   try{
-    if(res.status===429)throw rateLimitError(res,'媒体节点');
-    if(!res.ok)throw Object.assign(new Error(`媒体节点 ${new URL(res.url).hostname} HTTP ${res.status}`),
-      {httpStatus:res.status,stage:'media',retryable:res.status===403});
+    if(!res.ok){
+      const info=await responseFailure(res,'media');
+      if(info)throw upstreamFailureError(info);
+      throw Object.assign(new Error(`媒体节点 HTTP ${res.status}`),{httpStatus:res.status,stage:'media'});
+    }
     if(seg.span && (res.status!==206||!res.headers.get('content-range')?.startsWith(`bytes ${seg.span.start}-${seg.span.end}/`)))
       throw unverified('服务器未返回指定媒体字节范围');
-    if(/text\/html|json|mpegurl/i.test(res.headers.get('content-type')||''))throw new Error('媒体地址返回清单或错误页面');
+    if(/text\/html|json|mpegurl/i.test(res.headers.get('content-type')||'')){
+      const info=await responseFailure(res,'media');
+      if(info)throw upstreamFailureError(info);
+      throw unverified('媒体地址返回清单或错误页面');
+    }
     for await(const b of res.body){
       if(bytes+b.length>64*1024*1024)throw unverified('单片超出检测流量上限');
       if(sampled<sampleLimit){
@@ -412,6 +418,6 @@ export async function playbackProbe(url,quick,headers,manifest,timing){
     if(timedOut(e))notes.push('请求超时，未能验证；不据此认定线路失效');
     const unknown=timedOut(e)||e.unverified||['非 HLS','特殊格式'].includes(e.status)||[401,403,429,607].includes(e.httpStatus);
     const retryable=e.retryable===true||[408,425,500,502,503,504,607].includes(e.httpStatus)||(!e.httpStatus&&!e.unverified&&!['非 HLS','特殊格式'].includes(e.status));
-    return {...timing.observeFailure?.(e),evidence:timing.evidence,method:mode,quality:unknown?'未能验证':'暂时失败',status:unknown?'未能验证':'暂时失败',httpStatus:e.httpStatus,stage:e.stage,retryAfter:e.retryAfter,retryable,retry_deferred:e.retryDeferred,note:[...notes,e.message],seconds:round(now()-started)};
+    return {...timing.observeFailure?.(e),evidence:timing.evidence,method:mode,quality:unknown?'未能验证':'暂时失败',status:unknown?'未能验证':'暂时失败',httpStatus:e.httpStatus,stage:e.stage,retryAfter:e.retryAfter,upstreamCooldown:e.upstreamCooldown,retryable,retry_deferred:e.retryDeferred,note:[...notes,e.message],seconds:round(now()-started)};
   }finally{clearInterval(tick);delete timing.observeFailure;}
 }

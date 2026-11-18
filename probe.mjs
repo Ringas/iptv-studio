@@ -1,7 +1,7 @@
 import {eitSample} from './eit-input.mjs';
-import {playbackProbe,rateLimitError} from './playback.mjs';
+import {playbackProbe} from './playback.mjs';
 import {dimensions} from './resolution.mjs';
-import {mediaFetch} from './media-http.mjs';
+import {mediaFetch,upstreamFailure,upstreamFailureError} from './media-http.mjs';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {channel} from 'node:diagnostics_channel';
 // One process handles one route. Keep hostnames only, including redirect responses.
@@ -16,22 +16,22 @@ function clean(s) {
   return s.replace(/https?:\/\/\S+/g,'[地址]').replace(/[A-Za-z0-9%_=-]{28,}/g,'[标识]').replace(/\s+/g,' ').trim().slice(0,300);
 }
 async function httpFailure(res, status, stage) {
-  if(res.status===607){
-    await res.body?.cancel();
-    throw Object.assign(new Error(`${stage} ${new URL(res.url).hostname} HTTP 607`),{status:'未能验证',httpStatus:607});
-  }
   const reader=res.body?.getReader();
   let body='';
   if(reader) {
     try {
-      const {value}=await reader.read();
-      if(value) body=clean(new TextDecoder().decode(value.subarray(0,2048)));
+      let bytes=0;const chunks=[];
+      while(bytes<8192){const {value,done}=await reader.read();if(done)break;const part=value.subarray(0,8192-bytes);chunks.push(part);bytes+=part.length;}
+      body=clean(Buffer.concat(chunks).toString());
     } catch(e) {if(res.status!==429)throw e;} finally {await reader.cancel().catch(()=>{});}
   }
-  if(res.status===429)throw rateLimitError(res,stage,body);
-  const u=new URL(res.url);
-  const clues=[...res.headers].filter(([k])=>/error|reason|reject|deny|authenticat/i.test(k)).map(([k,v])=>k+'='+clean(v));
-  throw Object.assign(new Error(stage+' '+u.hostname+' HTTP '+res.status+'，'+(body||'响应正文为空')+(clues.length?'，'+clues.join('，'):'')),{status,httpStatus:res.status});
+  const info=upstreamFailure(body,res.headers,stage==='入口清单'?'entry':stage==='末片'?'media':'manifest',res.status);
+  if(info){
+    if(res.status===429)info.retryAfter=Math.max(6,info.retryAfter||0);
+    info.note=stage+' '+new URL(res.url).hostname+' HTTP '+res.status+'，'+info.note;
+    const error=upstreamFailureError(info);error.status=res.status===429?'上游限流':res.status===607||info.upstreamCooldown?'未能验证':status;throw error;
+  }
+  throw Object.assign(new Error(stage+' HTTP '+res.status),{status,httpStatus:res.status});
 }
 function parseManifest(lines,base){
   if (lines[0]!=='#EXTM3U') problem('非 HLS','响应缺少 #EXTM3U');
@@ -84,19 +84,14 @@ async function playlist(url, note, depth=0, playback=false, reloadEntry=false) {
     for await (const chunk of res.body) {
       chunks.push(chunk); size+=chunk.length;
       if(size>1024*1024) problem('特殊格式','清单超过 1 MiB');
-      if(size>=8 && !Buffer.concat(chunks,Math.min(size,80)).toString().trimStart().startsWith('#EXTM3U')) {
-        const type=res.headers.get('content-type')||'未知';
-        let extra='';
-        if(type.includes('json') && size<=8192) {
-          let parsed;
-          try { parsed=JSON.parse(Buffer.concat(chunks).toString()); } catch {}
-          const msg=parsed?.message ?? parsed?.msg ?? parsed?.error;
-          if(typeof msg==='string') extra='，'+msg.replace(/https?:\/\/\S+/g,'[地址]').slice(0,120);
-          if(parsed?.code!=null && ['string','number'].includes(typeof parsed.code)) extra+='，code='+String(parsed.code).slice(0,24);
-        }
-        if(type.includes('json') && !extra) extra='，'+clean(Buffer.concat(chunks).toString());
-        problem('非 HLS','清单返回 '+type+extra);
-      }
+      if(size>8192 && !Buffer.concat(chunks,80).toString().trimStart().startsWith('#EXTM3U'))break;
+    }
+    if(!Buffer.concat(chunks,Math.min(size,80)).toString().trimStart().startsWith('#EXTM3U')){
+      const type=res.headers.get('content-type')||'未知';
+      const body=Buffer.concat(chunks).subarray(0,8192).toString();
+      const failure=upstreamFailure(body,res.headers,depth?'manifest':'entry');
+      if(failure)throw upstreamFailureError(failure);
+      problem('非 HLS','清单返回 '+type+(type.includes('json')?'，'+clean(body):''));
     }
     const lines = Buffer.concat(chunks).toString().trim().split(/\r?\n/).map(s=>s.trim());
     const parsed=parseManifest(lines,res.url);

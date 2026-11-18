@@ -51,7 +51,10 @@ base='http://127.0.0.1:'+str(port)
 def request(p,data=None):
     req=Request(base+p,data=json.dumps(data).encode() if data is not None else None,headers={'Content-Type':'application/json'})
     with urlopen(req,timeout=10) as r: return r.read()
-def api(p,data=None): return json.loads(request('/api/'+p,data))
+def api(p,data=None):
+    result=json.loads(request('/api/'+p,data))
+    if p=='source':waitjob()  # Saving now starts an independent source refresh.
+    return result
 def waitjob():
     for _ in range(350):
         if not api('status')['job']['running']: return
@@ -317,11 +320,12 @@ with tempfile.TemporaryDirectory() as temp:
         assert any(r['source']=='A' and '503' in r.get('reason','') for r in api('logs?kind=refresh'))
         assert len(json.loads(request('/live.json')))==1 and '失败' in api('state')['sources'][0]['last']
         sources={r['name']:r for r in api('state')['sources']}
+        saved_a_at=int(time.time())
         api('source',{**sources['A'],'interval_hours':0.5})
         api('source',{**sources['B'],'interval_hours':0})
         def schedules():return {r['name']:r for r in api('state')['sources']}
         plans=schedules()
-        assert plans['A']['next_update']-int(time.time()) in range(1798,1802) and plans['B']['next_update']==0
+        assert plans['A']['next_update']-saved_a_at in range(1798,1802) and plans['B']['next_update']==0
         api('settings',{**cfg,'hours':2,'strict':True,'mode':'best'})
         plans2=schedules()
         assert plans2['A']['next_update']==plans['A']['next_update'] and plans2['节目']['next_update']-int(time.time()) in range(7198,7202)

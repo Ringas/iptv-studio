@@ -1,0 +1,160 @@
+[
+ {
+  "name": "plain wrapped cooldown",
+  "body": "主、备用 CDN 均不可用（a.example.invalid: 清单 HTTP 403；b.example.invalid: 清单 HTTP 403），30 秒内暂停向官方请求",
+  "headers": {},
+  "stage": "entry",
+  "expected": {
+   "httpStatus": 403,
+   "retryAfter": 30,
+   "upstreamCooldown": true,
+   "retryable": true
+  }
+ },
+ {
+  "name": "structured rate limit",
+  "body": "{\"code\":429,\"message\":\"limited\",\"retry_after\":12}",
+  "headers": {},
+  "stage": "entry",
+  "expected": {
+   "httpStatus": 429,
+   "retryAfter": 12,
+   "upstreamCooldown": true,
+   "retryable": true
+  }
+ },
+ {
+  "name": "header dominates",
+  "body": "HTTP 503，等待 8 秒",
+  "headers": {
+   "retry-after": "40"
+  },
+  "stage": "entry",
+  "expected": {
+   "httpStatus": 503,
+   "retryAfter": 40,
+   "upstreamCooldown": true,
+   "retryable": true
+  }
+ },
+ {
+  "name": "ordinary auth denied",
+  "body": "login required",
+  "headers": {},
+  "stage": "entry",
+  "httpStatus": 403,
+  "expected": {
+   "httpStatus": 403,
+   "retryAfter": null,
+   "upstreamCooldown": false,
+   "retryable": false
+  }
+ },
+ {
+  "name": "stale media denied",
+  "body": "expired",
+  "headers": {},
+  "stage": "media",
+  "httpStatus": 403,
+  "expected": {
+   "httpStatus": 403,
+   "retryAfter": null,
+   "upstreamCooldown": false,
+   "retryable": true
+  }
+ },
+ {
+  "name": "401 never automatic",
+  "body": "login required",
+  "headers": {
+   "retry-after": "30"
+  },
+  "stage": "entry",
+  "httpStatus": 401,
+  "expected": {
+   "httpStatus": 401,
+   "retryAfter": 30,
+   "upstreamCooldown": true,
+   "retryable": false
+  }
+ },
+ {
+  "name": "network policy",
+  "body": "Blocked by network policy HTTP 403",
+  "headers": {},
+  "stage": "entry",
+  "expected": {
+   "httpStatus": 403,
+   "retryAfter": null,
+   "upstreamCooldown": false,
+   "retryable": true
+  }
+ },
+ {
+  "name": "dates are not status codes",
+  "body": "2026-11-18 04:24:41.506 sample 403 pixels",
+  "headers": {},
+  "stage": "entry",
+  "expected": null
+ },
+ {
+  "name": "URL is not an error code",
+  "body": "error at https://example.invalid/HTTP403?token=private",
+  "headers": {},
+  "stage": "entry",
+  "expected": null
+ },
+ {
+  "name": "unknown JSON field is not an error",
+  "body": "{\"description\":\"HTTP 403\"}",
+  "headers": {},
+  "stage": "entry",
+  "expected": null
+ },
+ {
+  "name": "unrelated numbers ignored",
+  "body": "unsupported stream 720p, 30 segments",
+  "headers": {},
+  "stage": "entry",
+  "expected": null
+ },
+ {
+  "name": "JSON data message",
+  "body": "{\"data\":\"HTTP 503 暂停 18 秒\"}",
+  "headers": {},
+  "stage": "entry",
+  "expected": {
+   "httpStatus": 503,
+   "retryAfter": 18,
+   "upstreamCooldown": true,
+   "retryable": true
+  }
+ },
+ {
+  "name": "redacted message",
+  "body": "HTTP 403 等待 3 秒 token=secret-value https://example.invalid/live?sign=private",
+  "headers": {},
+  "stage": "media",
+  "expected": {
+   "httpStatus": 403,
+   "retryAfter": 3,
+   "upstreamCooldown": true,
+   "retryable": true
+  }
+ },
+ {
+  "name": "429 textual cooldown retains safety margin",
+  "body": "等待 20 秒后重试",
+  "headers": {
+   "retry-after": "6"
+  },
+  "stage": "entry",
+  "httpStatus": 429,
+  "expected": {
+   "httpStatus": 429,
+   "retryAfter": 21,
+   "upstreamCooldown": true,
+   "retryable": true
+  }
+ }
+]
