@@ -5,9 +5,10 @@ from pathlib import Path
 from urllib.request import build_opener,ProxyHandler
 
 out=Path(sys.argv[1]);out.mkdir(parents=True,exist_ok=True)
-media=out/'media';media.mkdir()
+media=out/'media';media.mkdir(exist_ok=True)
 subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-f','lavfi','-i','testsrc2=size=1280x720:rate=25','-t','10','-c:v','libx264','-preset','veryfast','-b:v','1800k','-g','50','-sc_threshold','0','-pix_fmt','yuv420p','-f','hls','-hls_time','2','-hls_list_size','0','-hls_playlist_type','vod',str(media/'stream.m3u8')],check=True)
 class Media(SimpleHTTPRequestHandler):
+ extensions_map={**SimpleHTTPRequestHandler.extensions_map,'.ts':'video/mp2t','.m3u8':'application/vnd.apple.mpegurl'}
  def log_message(self,*args):pass
  def do_GET(self):
   time.sleep(.04) # Identical deterministic upstream latency for both images.
@@ -16,7 +17,7 @@ server=ThreadingHTTPServer(('127.0.0.1',18880),functools.partial(Media,directory
 threading.Thread(target=server.serve_forever,daemon=True).start()
 op=build_opener(ProxyHandler({}));names=[];chrome=None
 try:
- for label,image,port in [('baseline','talktoo/iptv-studio:v1.1.3',18881),('candidate','talktoo/iptv-studio:slim-test-55f8cf7',18882)]:
+ for label,image,port in [('baseline','talktoo/iptv-studio:v1.1.3',18881),('candidate',os.getenv('CANDIDATE_IMAGE','talktoo/iptv-studio:slim-test-55f8cf7'),18882)]:
   subprocess.run(['docker','pull',image],check=True)
   name='iptv-first-frame-'+label;names.append(name)
   subprocess.run(['docker','run','-d','--init','--name',name,'--network','host','--tmpfs','/app/data:uid=1000,gid=1000','-e',f'PORT={port}','-e','LOG_LEVEL=WARNING',image],check=True)
@@ -42,7 +43,7 @@ with service.db() as c:
     with op.open('http://127.0.0.1:19222/json/version',timeout=1):break
    except OSError:time.sleep(.2)
   else:raise RuntimeError('Chrome boot timeout')
-  subprocess.run(['node','scripts/benchmark_player.cjs','http://127.0.0.1:19222',str(out/'first-frame.json')],check=True,timeout=650)
+  subprocess.run(['node','scripts/benchmark_player.cjs','http://127.0.0.1:19222',str(out/'first-frame.json')],check=True,timeout=900)
 finally:
  if chrome:chrome.terminate();chrome.wait(timeout=10)
  for name in names:

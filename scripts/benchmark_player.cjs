@@ -12,7 +12,7 @@ class CDP{
  const [debug,out]=process.argv.slice(2),info=await(await fetch(debug+'/json/version')).json();
  const browser=await CDP.open(info.webSocketDebuggerUrl),rows=[];
  try{
-  for(let round=0;round<4;round++)for(const label of(round%2?['candidate','baseline']:['baseline','candidate'])){
+  for(let round=0;round<16;round++)for(const label of(round%2?['candidate','baseline']:['baseline','candidate'])){
    const origin='http://127.0.0.1:'+(label==='baseline'?18881:18882);
    const {browserContextId}=await browser.send('Target.createBrowserContext');
    const {targetId}=await browser.send('Target.createTarget',{url:'about:blank',browserContextId});
@@ -42,7 +42,7 @@ class CDP{
      const reqs=page.events.filter(v=>v.method==='Network.requestWillBeSent');
      const clickStart=reqs.find(v=>new URL(v.params.request.url).pathname==='/api/play')?.params.timestamp;
      const mediaEvent=page.events.find(v=>v.method==='Network.responseReceived'&&v.params.response===firstMedia);
-     const row={round,label,phase,...result,session_response_ms:api?.timing?.receiveHeadersEnd,first_media_headers_ms:mediaEvent&&clickStart?(mediaEvent.params.timestamp-clickStart)*1000:null,requests:responses.map(r=>({path:new URL(r.url).pathname,status:r.status,mime:r.mimeType,headers_ms:r.timing?.receiveHeadersEnd})),completed_requests:completed.length};
+     const row={round,label,phase,...result,session_response_ms:api?.timing?.receiveHeadersEnd,first_media_headers_ms:mediaEvent&&clickStart?(mediaEvent.params.timestamp-clickStart)*1000:null,requests:responses.map(r=>({path:new URL(r.url).pathname,status:r.status,mime:r.mimeType,headers_ms:r.timing?.receiveHeadersEnd})),completed_requests:completed.length,first_media_request_ms:(()=>{const event=reqs.find(v=>v.params.request.url===firstMedia?.url);return event&&clickStart?(event.params.timestamp-clickStart)*1000:null;})()};
      rows.push(row);fs.writeFileSync(out,JSON.stringify({browser:info.Browser,rows},null,2));console.log(JSON.stringify({round,label,phase,...result}));
      await page.eval("document.getElementById('closePlayer').click()");await sleep(200);
      if(result.error)throw Error(JSON.stringify(row));
