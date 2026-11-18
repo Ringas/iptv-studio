@@ -31,7 +31,7 @@ COPY --from=pack /runtime/ /
 WORKDIR /app
 COPY container-init.py app.py catalog.py grouping.py service.py eit.py eit-input.mjs playback.mjs probe.mjs resolution.mjs index.html style.css ui.js ./
 COPY webplay.py hls.min.js hls-LICENSE.txt LICENSE ./
-COPY media-http.mjs gateway-lease.mjs dual_probe.py diagnostics.py ./
+COPY media-http.mjs gateway-lease.mjs dual_probe.py diagnostics.py logos.py ./
 ENV PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 TZ=Asia/Shanghai BIND=0.0.0.0 PORT=8787 DATA_DIR=/app/data PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 ENTRYPOINT ["python3","/app/container-init.py"]
 VOLUME ["/app/data"]

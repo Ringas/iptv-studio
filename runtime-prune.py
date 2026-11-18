@@ -10,6 +10,8 @@ import struct
 
 
 REMOVED_DIRS = ('usr/lib/apt', 'usr/lib/dpkg', 'usr/lib/systemd', 'usr/lib/udev', 'usr/local/lib/pkgconfig')
+PYTHON_NONRUNTIME_DIRS = ('pydoc_data', 'turtledemo', '__phello__')
+PYTHON_NONRUNTIME_FILES = ('turtle.py', '__hello__.py')
 
 
 def resolve(root, path):
@@ -91,12 +93,20 @@ def prune(root):
     all_paths = sorted(root.rglob('*'))
     library_dirs = {root / 'usr/lib', root / 'usr/lib64'}
     library_dirs.update(p for p in (root / 'usr/lib').glob('*-linux-gnu') if p.is_dir())
+    python = root / 'usr/local/lib/python3.13'
     excluded_dirs = [root / name for name in REMOVED_DIRS]
+    excluded_dirs += [python / name for name in PYTHON_NONRUNTIME_DIRS]
     extensions = root / 'usr/local/lib/python3.13/lib-dynload'
     excluded_files = {p for pattern in ('_test*.so', '_ctypes_test*.so', '_xxtestfuzz*.so', 'xxlimited*.so', 'xxsubtype*.so') for p in extensions.glob(pattern)}
     # The image already removes tkinter and has no Tcl/Tk libraries.
     if not (root / 'usr/local/lib/python3.13/tkinter').exists():
         excluded_files.update(extensions.glob('_tkinter*.so'))
+        excluded_files.update(python / name for name in PYTHON_NONRUNTIME_FILES if (python / name).is_file())
+    else:
+        # A future image with Tk must retain its turtle GUI as well.
+        excluded_dirs = [p for p in excluded_dirs if p != python / 'turtledemo']
+    # Compiler/linker artifacts are never imported by the Python runtime.
+    excluded_files.update(p for pattern in ('config-*/*.a','config-*/*.o') for p in python.glob(pattern) if p.is_file())
     excluded = excluded_dirs + list(excluded_files)
     index, metadata, candidates, roots = defaultdict(set), {}, set(), set()
     for path in all_paths:
@@ -148,8 +158,10 @@ def prune(root):
     for path in excluded_files:
         removed_bytes += path.stat().st_size
         path.unlink()
+    removed_dirs = []
     for path in excluded_dirs:
         if path.exists():
+            removed_dirs.append(str(path.relative_to(root)))
             removed_bytes += sum(p.stat().st_size for p in path.rglob('*') if p.is_file() and not p.is_symlink())
             shutil.rmtree(path)
     docs = root / 'usr/share/doc'
@@ -157,7 +169,11 @@ def prune(root):
         if (path.is_file() or path.is_symlink()) and not path.name.lower().startswith(('copyright', 'license', 'copying', 'notice')):
             removed_bytes += 0 if path.is_symlink() else path.stat().st_size
             path.unlink()
-    report = {'removed_bytes': removed_bytes, 'removed_libraries': removed_names, 'removed_test_extensions': sorted(p.name for p in excluded_files), 'kept_elf_files': len(keep)}
+    report = {'removed_bytes': removed_bytes, 'removed_libraries': removed_names,
+              'removed_test_extensions': sorted(p.name for p in excluded_files if p.suffix == '.so'),
+              'removed_nonruntime_files': sorted(str(p.relative_to(root)) for p in excluded_files if p.suffix != '.so'),
+              'removed_nonruntime_dirs': sorted(removed_dirs),
+              'kept_elf_files': len(keep)}
     print(json.dumps(report, ensure_ascii=False), flush=True)
     return report
 

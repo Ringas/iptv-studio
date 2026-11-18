@@ -26,6 +26,14 @@ class RuntimePruneTests(unittest.TestCase):
                'usr/lib/x86_64-linux-gnu/ossl-modules/legacy.so':b'elf',
                'usr/lib/apt/methods/http':b'not used',
                'usr/local/lib/python3.13/lib-dynload/_testcapi.so':b'self-test',
+               'usr/local/lib/python3.13/pydoc_data/topics.py':b'help topics',
+               'usr/local/lib/python3.13/turtledemo/demo.py':b'Tk demo',
+               'usr/local/lib/python3.13/turtle.py':b'import tkinter',
+               'usr/local/lib/python3.13/__hello__.py':b'novelty demo',
+               'usr/local/lib/python3.13/__phello__/__init__.py':b'novelty demo',
+               'usr/local/lib/python3.13/config-linux/python.o':b'link artifact',
+               'usr/local/lib/python3.13/config-linux/Makefile':b'sysconfig metadata',
+               'usr/local/lib/python3.13/sysconfig/__init__.py':b'runtime metadata',
                'usr/share/doc/pkg/copyright':b'license','usr/share/doc/pkg/LICENSE':b'license',
                'usr/share/doc/pkg/changelog.gz':b'build documentation',
                'usr/local/share/doc/ffmpeg/README.md':b'license references',
@@ -45,6 +53,10 @@ class RuntimePruneTests(unittest.TestCase):
             self.assertFalse((root/'usr/lib/x86_64-linux-gnu/libunused.so').is_symlink())
             self.assertFalse((root/'usr/lib/apt').exists())
             self.assertFalse((root/'usr/local/lib/python3.13/lib-dynload/_testcapi.so').exists())
+            for name in ('pydoc_data','turtledemo','turtle.py','__hello__.py','__phello__','config-linux/python.o'):
+                self.assertFalse((root/'usr/local/lib/python3.13'/name).exists(),name)
+            for name in ('sysconfig/__init__.py','config-linux/Makefile'):
+                self.assertTrue((root/'usr/local/lib/python3.13'/name).exists(),name)
             for name in ('libgcc_s.so.1','libcrypto.so.3','libnss_files.so.2'):
                 self.assertTrue((root/'usr/lib/x86_64-linux-gnu'/name).exists())
             for name in ('usr/lib/x86_64-linux-gnu/ossl-modules/legacy.so','usr/share/doc/pkg/copyright','usr/share/doc/pkg/LICENSE','usr/local/share/doc/ffmpeg/README.md','etc/ssl/certs/ca-certificates.crt','usr/share/zoneinfo/Asia/Shanghai'):
@@ -63,6 +75,16 @@ class RuntimePruneTests(unittest.TestCase):
             self.assertTrue((root/'usr/lib/x86_64-linux-gnu/libunused.so.1').exists())
             self.assertTrue((root/'usr/lib/apt/methods/http').exists())
             self.assertTrue((root/'usr/share/doc/pkg/changelog.gz').exists())
+            self.assertTrue((root/'usr/local/lib/python3.13/pydoc_data/topics.py').exists())
+
+    def test_tk_components_retained_when_available(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);reader=self.fixture(root)
+            (root/'usr/local/lib/python3.13/tkinter').mkdir()
+            with patch.object(pruner,'elf_needed',side_effect=reader),contextlib.redirect_stdout(io.StringIO()):
+                pruner.prune(root)
+            self.assertTrue((root/'usr/local/lib/python3.13/turtle.py').exists())
+            self.assertTrue((root/'usr/local/lib/python3.13/turtledemo/demo.py').exists())
 
     def test_absolute_and_escaping_links(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -72,6 +94,18 @@ class RuntimePruneTests(unittest.TestCase):
             (root/'escape').symlink_to('../outside')
             with self.assertRaisesRegex(ValueError,'越界'):pruner.resolve(root,root/'escape')
         with self.assertRaises(ValueError):pruner.prune(Path('/'))
+
+    def test_runtime_comparison_rejects_unexpected_changes(self):
+        from scripts.audit_runtime import compare
+        before={'/usr/local/lib/python3.13/pydoc_data/topics.py':{'bytes':10,'sha256':'help'},
+                '/usr/local/bin/ffmpeg':{'bytes':100,'sha256':'decoder'},
+                '/etc/ssl/certs/ca-certificates.crt':{'bytes':20,'sha256':'CA'}}
+        after={p:v for p,v in before.items() if '/pydoc_data/' not in p}
+        self.assertEqual(compare(before,after)['removed_file_bytes'],10)
+        changed={**after,'/usr/local/bin/ffmpeg':{'bytes':100,'sha256':'changed'}}
+        with self.assertRaises(AssertionError):compare(before,changed)
+        missing={p:v for p,v in after.items() if not p.startswith('/etc/ssl')}
+        with self.assertRaises(AssertionError):compare(before,missing)
 
     @unittest.skipUnless(sys.platform.startswith('linux'),'Linux 构建验证中读取真实 ELF')
     def test_native_elf_reader(self):

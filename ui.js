@@ -31,7 +31,13 @@ function notice(text){
 }
 async function api(path,data){
  const r=await fetch('/api/'+path,data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{});
- if(!r.ok)throw Error(await r.text()); return r.json();
+ if(!r.ok){
+   const text=await r.text();let detail;
+   if(r.headers.get('content-type')?.includes('application/json')){try{detail=JSON.parse(text);}catch{}}
+   const error=Error(typeof detail?.error==='string'?detail.error:text);
+   if(detail)error.upstream={httpStatus:detail.httpStatus,retryAfter:detail.retryAfter,retryable:detail.retryable,stage:detail.stage};
+   throw error;
+ } return r.json();
 }
 function safely(fn){return async(...args)=>{try {await fn(...args);}catch(e){notice(e.message);}};}
 function applyHelp(root=document){
@@ -52,9 +58,9 @@ function applyHelp(root=document){
   ['#fields [name=group]','将频道及其线路移到所选分组；选自动分组可恢复智能分类。'],
   ['#fields [name=epg]','选择与本频道对应的节目表；保留自动匹配可由程序识别。'],
   ['#fields [name=target]','将本频道的线路归入所选频道；选保持独立可取消合并。'],
-  ['#fields [name=frequency]','跟随默认间隔、单独指定小时数，或关闭自动更新。'],
-  ['#fields [name=kind]','直播订阅提供频道地址，节目单订阅提供节目与播出时间。'],
-  ['#deleteSource','删除订阅及其频道快照，原订阅文件不受影响。'],
+  ['#fields [name=frequency]','跟随默认间隔、单独指定小时数，或关闭定时更新。'],
+  ['#fields [name=kind]','直播提供线路，节目单提供节目，台标订阅提供频道图片。'],
+  ['#deleteSource','删除订阅及其已保存内容，原订阅文件不受影响。'],
   ['[data-unmerge]','将这个成员拆回独立频道，保留它的线路。'],
   ['[data-address],[data-hidden-address]','展开完整直播地址，可选中复制。'],
   ['[data-guide]','查看此频道已匹配的节目单。'],
@@ -68,18 +74,21 @@ function applyHelp(root=document){
  for(const button of root.querySelectorAll('[data-fold]'))button.title=button.getAttribute('aria-expanded')==='true'?'收起本组频道或线路。':'展开本组频道或线路。';
  for(const button of root.querySelectorAll('[data-focus]'))button.title=$('group').value===button.dataset.focus?'恢复显示全部分组。':'仅显示这个分组，再次点击恢复全部分组。';
 }
-let revision=null,liveJob=null,cardChannels=new Map();
+let revision=null,liveJob=null,liveLogoJob=null,cardChannels=new Map();
 let stateRequest=0,appliedRequest=0;
 async function reload(live=false){
  const request=++stateRequest,next=await api('state');
  if(request<appliedRequest)return;
  appliedRequest=request;state=next;
+ document.body.dataset.logoBeauty=state.settings.logo_beauty||'off';
+ if(!live)failedLogos.clear();
+ syncLogoPreview();
  cardChannels=new Map(state.channels.map(c=>[c.name,c]));
  $('edition').textContent=state.preview?'预览模式':'本地工作区';
  $('edition').title=state.preview?'独立预览版：定时更新暂未运行，手动更新和检测仍可使用。':'当前运行的是正式工作区，定时更新按设置执行。';
  if($('dialog').open)updateTitlePreview?.();
  if(!live)guideCache.clear();
- $('stats').innerHTML=[[state.exported,'已发布频道'],[state.lines,'已发布线路'],[state.sources.filter(s=>s.kind==='playlist').length,'直播订阅'],[state.sources.filter(s=>s.kind==='epg').length,'EPG 订阅']].map(([v,k])=>`<div>${k}<strong>${v}</strong></div>`).join('');
+ $('stats').innerHTML=[[state.exported,'已发布频道'],[state.lines,'已发布线路'],[state.channels.filter(c=>c.published_routes===1).length,'单线路频道'],[state.channels.filter(c=>c.published_routes>1).length,'多线路频道']].map(([v,k])=>`<div>${k}<strong>${v}</strong></div>`).join('');
  const groups=directoryGroups(),old=$('group').value;
  $('group').innerHTML='<option value="">全部分组</option>'+groups.map(g=>`<option value="${esc(g)}">${esc(g)}</option>`).join('');
  $('group').value=groups.includes(old)?old:'';
@@ -95,7 +104,7 @@ async function reload(live=false){
  renderAccess(state.password_mode);
  if(!settingsDirty){
    f.probe_mode.value=probeModeChoice(cfg);f.criteria.value=cfg.criteria;f.min_height.value=cfg.min_height;f.min_speed.value=cfg.min_speed;
-   f.hours.value=cfg.minutes/60;f.mode.value=cfg.mode;f.strict.checked=cfg.strict;f.auto_probe.checked=cfg.auto_probe;
+   f.logo_beauty.value=cfg.logo_beauty||'off';f.hours.value=cfg.minutes/60;f.mode.value=cfg.mode;f.strict.checked=cfg.strict;f.auto_probe.checked=cfg.auto_probe;
    updateCriteriaFields();
  }
  $('next').textContent=state.preview?'预览中暂停定时任务':cfg.next?'下次计划更新　'+formatTime(cfg.next):'定时更新已关闭';
@@ -389,19 +398,41 @@ async function openPlayer(name,url,attempt=0){
  if(!$('playerDialog').open)$('playerDialog').showModal();
  const video=$('previewVideo');
  let failureHandled=false;
- function failed(message){
+ function retryInfo(value){
+   const raw=value?.upstream||value||{};
+   const message=typeof raw==='string'?raw:raw.error||raw.message||'';
+   const httpStatus=Number(raw.httpStatus)||Number(message.match(/HTTP\s*(\d{3})/)?.[1])||0;
+   return {error:message,httpStatus,retryable:raw.retryable,stage:raw.stage,retryAfter:Number(raw.retryAfter)||0};
+ }
+ let recentFailure=null;
+ function recoveryWatch(info){
+   recentFailure=info;
+   if(playerRetryTimer)return;
+   const at=video.currentTime||0;
+   playerRetryTimer=setTimeout(()=>{
+     playerRetryTimer=null;
+     if(version!==playerVersion||failureHandled)return;
+     if(!video.paused&&video.readyState>=3&&video.currentTime>at+.2){recentFailure=null;return;}
+     failed(info.error||'播放暂时中断',info,true);
+   },3000);
+ }
+ function failed(message,metadata={},networkFailure=false){
    if(version!==playerVersion||failureHandled)return;
    failureHandled=true;
+   clearTimeout(playerRetryTimer);playerRetryTimer=null;
    if(playerEngine){playerEngine.destroy();playerEngine=null;}
    video.onplaying=video.onwaiting=video.onerror=null;
    video.pause();video.removeAttribute('src');video.load();
    if(playerSession){api('close-play',{session:playerSession}).catch(()=>{});playerSession=null;}
-   if(attempt<2&&/HTTP (607|429)/.test(message)){
-     $('playerStatus').textContent=message+'，即将重新连接原始入口（'+(attempt+1)+'/2）…';
-     playerRetryTimer=setTimeout(()=>{if(version===playerVersion)openPlayer(name,url,attempt+1);},message.includes('429')?6000:1000);
+   const info=retryInfo({...metadata,error:message}),code=info.httpStatus;
+   const retryable=code!==401&&info.retryable!==false&&(info.retryable===true||[408,425,429,500,502,503,504,607].includes(code)||(code===403&&info.stage==='media')||(networkFailure&&(!code||(code>=200&&code<300))));
+   const seconds=Math.max(info.retryAfter,code===429?6:code===607?12:8);
+   if(attempt<2&&retryable&&seconds<=60){
+     $('playerStatus').textContent=message+'；等待 '+Math.ceil(seconds)+' 秒后重新打开原始入口（'+(attempt+1)+'/2）…';
+     playerRetryTimer=setTimeout(()=>{playerRetryTimer=null;if(version===playerVersion)openPlayer(name,url,attempt+1);},seconds*1000);
      return;
    }
-   $('playerStatus').textContent=message;$('retryPlayer').hidden=false;
+   $('playerStatus').textContent=message+(retryable?(seconds>60?'；上游冷却较长，请稍后手动重试':'；已达到本次自动恢复上限，请稍后重试'):'');$('retryPlayer').hidden=false;
  }
  try{
    const session=await api('play',{name,url});
@@ -410,12 +441,13 @@ async function openPlayer(name,url,attempt=0){
    const start=()=>video.play().catch(error=>{
      if(version===playerVersion&&error.name==='NotAllowedError')$('playerStatus').textContent='已就绪，点击画面中的播放按钮开始';
    });
-   video.onplaying=()=>{$('playerStatus').textContent='正在播放';};
-   video.onwaiting=()=>{$('playerStatus').textContent='正在缓冲…';};
+   video.onplaying=()=>{clearTimeout(playerRetryTimer);playerRetryTimer=null;recentFailure=null;$('playerStatus').textContent='正在播放';};
+   video.onwaiting=()=>{$('playerStatus').textContent='正在缓冲…';if(recentFailure)recoveryWatch(recentFailure);};
    video.onerror=async()=>{
-     let reason='';
-     try{reason=(await api('play-status?session='+encodeURIComponent(session.session))).error;}catch{}
-     failed(reason||'浏览器无法解码此线路的音视频格式，可更换线路或使用电视播放器');
+     let info={};
+     try{info=await api('play-status?session='+encodeURIComponent(session.session));}catch{}
+     if(version!==playerVersion)return;
+     failed(info.error||'浏览器无法解码此线路的音视频格式，可更换线路或使用电视播放器',info,video.error?.code===2);
    };
    if(session.kind==='native'){
      video.src=session.url;start();
@@ -429,21 +461,27 @@ async function openPlayer(name,url,attempt=0){
      const engine=new Hls({backBufferLength:30,maxBufferLength:20,maxMaxBufferLength:40});
      playerEngine=engine;
      engine.on(Hls.Events.MANIFEST_PARSED,start);
-     engine.on(Hls.Events.ERROR,(_,data)=>{
+     engine.on(Hls.Events.ERROR,async(_,data)=>{
+       if(version!==playerVersion||failureHandled)return;
        const code=data.response?.code;
-       const reason=typeof data.response?.data==='string'&&!data.response.data.startsWith('#')?data.response.data.slice(0,180):'';
+       let info={},reason=typeof data.response?.data==='string'?data.response.data:'';
        if(code>=400){
-         api('play-status?session='+encodeURIComponent(session.session))
-           .then(result=>failed(result.error||reason||'播放请求失败，HTTP '+code))
-           .catch(()=>failed(reason||'播放请求失败，HTTP '+code));
+         try{info=await api('play-status?session='+encodeURIComponent(session.session));}catch{}
+         if(!info.error){try{info=JSON.parse(reason);}catch{}}
+       }
+       if(version!==playerVersion||failureHandled)return;
+       info=retryInfo({...info,error:info.error||(code?'播放请求失败，HTTP '+code:'播放连接暂时中断'),httpStatus:info.httpStatus||code,stage:info.stage||(data.frag?'media':'manifest')});
+       if(info.httpStatus===401||(info.httpStatus===403&&info.stage!=='media'&&info.retryable===false)){failed(info.error,info);return;}
+       if(!data.fatal){
+         if(info.retryAfter>0||[429,607].includes(info.httpStatus)){failed(info.error,info,true);return;}
+         if(data.type===Hls.ErrorTypes.NETWORK_ERROR||code>=400)recoveryWatch(info);
          return;
        }
-       if(!data.fatal&&!/HTTP (607|429)/.test(reason))return;
-       failed(reason||(code?'播放请求失败，HTTP '+code+'，请重试':'播放中断或浏览器不支持此编码，请重试或更换线路'));
+       failed(info.error,info,data.type===Hls.ErrorTypes.NETWORK_ERROR);
      });
      engine.loadSource(session.url);engine.attachMedia(video);
    }
- }catch(error){failed(error.message);}
+ }catch(error){failed(error.message,error.upstream||{});}
 }
 $('closePlayer').onclick=()=>{releasePlayer();$('playerDialog').close();};
 $('playerDialog').addEventListener('close',()=>{
@@ -502,7 +540,7 @@ function usableLogo(c){return c?.logo_candidates?.find(url=>!failedLogos.has(url
 function logoCell(c){
  const url=usableLogo(c);
  if(!url)return `<small class="secondary">${c.logo?'加载失败':'未匹配'}</small>`;
- return `<span class="logo-frame"><img src="${esc(url)}" data-channel-logo="${esc(c.name)}" alt="${esc(c.label)}台标" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span>`;
+ return `<button type="button" class="logo-frame logo-preview-trigger" data-logo-preview data-logo-owner="${esc(c.name)}" aria-label="预览 ${esc(c.label)}台标" title="点击预览台标"><img src="${esc(url)}" data-channel-logo="${esc(c.name)}" alt="${esc(c.label)}台标" loading="lazy" decoding="async" referrerpolicy="no-referrer"></button>`;
 }
 document.addEventListener('error',e=>{
  const img=e.target;
@@ -511,7 +549,7 @@ document.addEventListener('error',e=>{
  const c=state.channels.find(x=>x.name===img.dataset.channelLogo),next=usableLogo(c);
  if(next){img.src=next;return;}
  const note=document.createElement('small');note.className='secondary';note.textContent='加载失败';
- if(img.closest('.station-mark'))img.remove();
+ if(img.closest('.station-mark')){const fallback=document.createElement('span');fallback.className='station-mark';fallback.setAttribute('aria-hidden','true');fallback.textContent=c?.label?.slice(0,2)||'台标';img.closest('.station-mark').replaceWith(fallback);}
  else img.parentElement.replaceWith(note);
 },true);
 function sourceNames(r){return [...new Set(r.from||[])].join('、')||'未知';}
@@ -579,7 +617,7 @@ function channelCard(c){
  const initials=esc(c.label.match(/^[a-z]+/i)?.[0].slice(0,4)||c.label.slice(0,2));
  return `<article data-card-name="${esc(c.name)}" data-selection-key="${esc(c.name)}" data-publication="${published?'published':'unpublished'}" aria-label="${esc(c.label)}" aria-description="${esc(publicationHint)}" title="${esc(publicationHint)}" class="channel-card ${picked.has(c.name)?'marked':''}">
  <div class="card-name">
- <span class="station-mark" aria-hidden="true"><span>${initials}</span>${logo?`<img data-channel-logo="${esc(c.name)}" src="${esc(logo)}" loading="lazy" referrerpolicy="no-referrer" alt="">`:''}</span>
+ ${logo?`<button type="button" class="station-mark logo-preview-trigger" data-logo-preview data-logo-owner="${esc(c.name)}" aria-label="预览 ${esc(c.label)}台标" title="点击预览台标"><img data-channel-logo="${esc(c.name)}" src="${esc(logo)}" loading="lazy" referrerpolicy="no-referrer" alt="${esc(c.label)}台标"></button>`:`<span class="station-mark" aria-hidden="true">${initials}</span>`}
  <div class="card-identity"><button type="button" data-channel="${esc(c.name)}" title="点击查看详情：【${esc(c.label)}】">${esc(c.label)}</button><div class="card-caption" aria-label="线路启停状态">${c.lines.map((r,i)=>{const label='线路'+(i+1)+' · '+(r.platform||'来源未识别')+' · '+(r.enabled?'已启用':'已停用');return `<span class="route-state-dot" data-enabled="${Boolean(r.enabled)}" role="img" aria-label="${esc(label)}" title="${esc(label)}"></span>`;}).join('')}</div></div>
  ${hideButton('channel',c.name,'',true)}
  </div><div class="card-data"><div class="card-quality">${cardDetection(c)}</div>${c.lines.length?playButton(c,preferred):''}</div></article>`;
@@ -794,71 +832,79 @@ const field=(label,name,value='')=>`<label>${esc(label)}<input name="${name}" va
 let updateTitlePreview=null;
 function show(title,html,handler){$('dialog').classList.remove('source-editor');$('channelEdit').hidden=true;$('apply').hidden=false;updateTitlePreview=null;$('titleLogo').hidden=true;$('titleLogo').replaceChildren();$('title').textContent=title;$('fields').innerHTML=html;editing=handler;applyHelp($('dialog'));if(!$('dialog').open)$('dialog').showModal();$('dialog').scrollTop=0;}
 function sourceIcon(kind){
+ if(kind==='logo')return '<span class="source-icon logo-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 3-3 6 6"/></svg></span>';
  return `<span class="source-icon ${kind==='epg'?'guide-icon':''}" aria-hidden="true"><svg viewBox="0 0 24 24">${kind==='epg'?'<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M8 3v4m8-4v4M4 10h16M8 14h3m-3 3h7"/>':'<rect x="3" y="4" width="18" height="14" rx="3"/><path d="M8 21h8m-4-3v3m-3-9 5-3-5-3z"/>'}</svg></span>`;
 }
 const changingSources=new Set();
+const refreshingSources=new Set();
 function sourceToggle(s){
  const button=document.createElement('button');
  button.type='button';button.dataset.sourceToggle=s.id;
  setSwitch(button,Boolean(s.enabled),'订阅 '+s.name);
  button.disabled=busy||changingSources.has(s.id);
- button.title='点击'+toggleText(!s.enabled)+'订阅，立即生效。停用后不再更新或发布其内容。';
+ button.title='点击'+toggleText(!s.enabled)+'订阅，立即生效。'+(s.kind==='logo'?'停用后不再更新或用于台标匹配。':'停用后不再更新或发布其内容。');
  return button.outerHTML;
 }
 function renderFeeds(){
  const sources=state.sources;
- $('sourceSummary').innerHTML=`<span><b>${sources.length}</b> 个订阅</span><span><i class="source-dot"></i>${sources.filter(s=>s.enabled).length} 个已启用</span><span>${sources.filter(s=>s.kind==='playlist').length} 个直播源 · ${sources.filter(s=>s.kind==='epg').length} 个节目单</span>`;
+ $('sourceSummary').innerHTML=`<span><b>${sources.length}</b> 个订阅</span><span><i class="source-dot"></i>${sources.filter(s=>s.enabled).length} 个已启用</span><span>${sources.filter(s=>s.kind==='playlist').length} 个直播源 · ${sources.filter(s=>s.kind==='epg').length} 个节目单 · ${sources.filter(s=>s.kind==='logo').length} 个台标订阅</span>`;
  $('feeds').innerHTML=sources.map(s=>`<article class="feed">
-   <div class="feed-top">${sourceIcon(s.kind)}<div class="feed-title"><span class="feed-kind">${s.kind==='epg'?'节目单 · XMLTV':'直播源 · M3U / TXT'}</span><h2>${esc(s.name)}</h2></div>${sourceToggle(s)}</div>
+   <div class="feed-top">${sourceIcon(s.kind)}<div class="feed-title"><span class="feed-kind">${s.kind==='epg'?'节目单 · XMLTV':s.kind==='logo'?'台标 · JSON':'直播源 · M3U / TXT'}</span><h2>${esc(s.name)}</h2></div>${sourceToggle(s)}</div>
    <div class="feed-address"><small>订阅地址</small><p class="url">${esc(s.url)}</p></div>
-   <dl class="feed-facts"><div><dt>自动更新</dt><dd>${esc(sourceSchedule(s))}</dd></div><div><dt>资料优先级</dt><dd>${s.priority}</dd></div></dl>
+   <dl class="feed-facts"><div><dt>定时更新</dt><dd>${esc(sourceSchedule(s))}</dd></div><div><dt>资料优先级</dt><dd>${s.priority}</dd></div></dl>
    ${s.guide_urls?.length?`<details class="feed-guides"><summary>自带节目单 <span>${s.guide_urls.length}</span></summary>${s.guide_urls.map(url=>`<p class="url">${esc(url)}</p>`).join('')}</details>`:''}
-   <div class="feed-bottom"><small><span class="feed-result-label">最近更新${s.updated?' · '+esc(formatTime(s.updated)):''}</span>${esc(s.last||'尚未更新，保存后可更新订阅')}</small><button type="button" data-feed="${s.id}" aria-label="编辑 ${esc(s.name)}">编辑订阅</button></div>
- </article>`).join('')||'<div class="source-empty"><h2>添加你的第一个订阅</h2><p>接入直播清单或 XMLTV 节目单，统一管理更新与发布。</p><button type="button" id="emptyAddSource" class="primary">添加订阅</button></div>';
+   <div class="feed-bottom"><small><span class="feed-result-label">最近更新${s.updated?' · '+esc(formatTime(s.updated)):''}</span>${esc(s.last||'尚未更新，保存后自动更新')}</small><div class="feed-actions"><button type="button" class="source-refresh" data-source-refresh="${s.id}" aria-label="更新 ${esc(s.name)}" title="更新 ${esc(s.name)} · 仅更新此订阅，不检测线路。" ${busy||refreshingSources.has(s.id)?'disabled':''}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3a7 7 0 0 0 11.6-1"/></svg></button><button type="button" data-feed="${s.id}" aria-label="编辑 ${esc(s.name)}" ${busy?'disabled':''}>编辑订阅</button></div></div>
+ </article>`).join('')||'<div class="source-empty"><h2>添加你的第一个订阅</h2><p>接入直播清单、节目单或台标，统一管理订阅。</p><button type="button" id="emptyAddSource" class="primary">添加订阅</button></div>';
  if($('emptyAddSource'))$('emptyAddSource').onclick=()=>editSource();
- applyHelp($('feeds'));
+ applyHelp($('feeds'));syncSourceActions(liveJob||{running:busy});
 }
 function sourceSchedule(s){
  const hours=s.interval_hours??state.settings.minutes/60;
- const plan=(s.interval_hours==null?'跟随默认 · ':'')+(hours?'每 '+Number(hours.toFixed(4))+' 小时':'自动更新已关闭');
+ const plan=(s.interval_hours==null?'跟随默认 · ':'')+(hours?'每 '+Number(hours.toFixed(4))+' 小时':'定时更新已关闭');
  if(state.preview&&s.next_update)return plan+' · 预览中暂停调度';
  return plan+(s.next_update?' · 下次更新 '+formatTime(s.next_update):'');
 }
 function editSource(id){
  const s=state.sources.find(x=>x.id===id)||{enabled:1,priority:10,kind:'playlist'};
  const mode=s.interval_hours==null?'inherit':s.interval_hours===0?'off':'custom';
- const html=`<div class="source-intro">${sourceIcon(s.kind)}<p>连接直播清单或节目单，设置订阅的更新方式。</p></div>
+ const html=`<div class="source-intro">${sourceIcon(s.kind)}<p>连接直播、节目单或台标；保存后自动更新当前订阅。</p></div>
  <section class="source-section"><h3>订阅信息</h3><div class="source-form-grid">
  <label>订阅名称<input name="name" required placeholder="例如：家庭直播源" value="${esc(s.name||'')}"></label>
- <label>内容类型<select name="kind"><option value="playlist">直播 · M3U / TXT</option><option value="epg" ${s.kind==='epg'?'selected':''}>节目单 · XMLTV / GZIP</option></select></label>
- <label class="source-wide">订阅地址<input name="url" type="url" required placeholder="https://example.com/channels.m3u" value="${esc(s.url||'')}" spellcheck="false" autocomplete="off"><small>填写直播清单或节目单的完整下载地址。</small></label>
+ <label>内容类型<select name="kind"><option value="playlist">直播 · M3U / TXT</option><option value="epg" ${s.kind==='epg'?'selected':''}>节目单 · XMLTV / GZIP</option><option value="logo" ${s.kind==='logo'?'selected':''}>台标 · JSON</option></select></label>
+ <label class="source-wide">订阅地址<input name="url" type="url" required placeholder="https://example.com/channels.m3u" value="${esc(s.url||'')}" spellcheck="false" autocomplete="off"><small id="sourceFormatHint"></small></label>
  </div></section>
  <section class="source-section"><h3>更新与优先级</h3><div class="source-form-grid">
- <label>自动更新<select name="frequency"><option value="inherit">跟随默认设置</option><option value="custom">按指定间隔更新</option><option value="off">关闭自动更新</option></select><small id="sourcePlanHint"></small></label>
+ <label>定时更新<select name="frequency"><option value="inherit">跟随默认设置</option><option value="custom">按指定间隔更新</option><option value="off">关闭定时更新</option></select><small id="sourcePlanHint"></small></label>
  <label>资料优先级<input name="priority" type="number" step="1" required value="${esc(s.priority)}"><small>数值越小，频道资料越优先采用。</small></label>
  <label id="sourceHours" class="source-wide">更新间隔<span class="source-hours"><input name="hours" type="number" min="0.016666666666666666" max="720" step="any" required value="${esc(s.interval_hours||state.settings.minutes/60||6)}"><span>小时</span></span></label>
  </div></section>
  <footer class="source-editor-footer">${id?'<button type="button" id="deleteSource" class="source-delete">删除订阅</button>':'<span></span>'}<div><button type="button" id="cancelSource">取消</button><button type="submit" class="primary">保存订阅</button></div></footer>`;
  show(id?'编辑订阅':'添加订阅',html,async form=>{
    const f=form.elements;
-   await api('source',{id,name:f.name.value,kind:f.kind.value,url:f.url.value,priority:+f.priority.value,interval_hours:f.frequency.value==='inherit'?null:f.frequency.value==='off'?0:+f.hours.value});
+   return api('source',{id,name:f.name.value,kind:f.kind.value,url:f.url.value,priority:+f.priority.value,interval_hours:f.frequency.value==='inherit'?null:f.frequency.value==='off'?0:+f.hours.value});
  });
  $('dialog').classList.add('source-editor');$('apply').hidden=true;
  $('cancelSource').onclick=()=>$('dialog').close();
  const f=$('editor').elements;
- f.kind.onchange=()=>{$('fields').querySelector('.source-intro .source-icon').outerHTML=sourceIcon(f.kind.value);};
+ function showSourceFormat(){
+   $('fields').querySelector('.source-intro .source-icon').outerHTML=sourceIcon(f.kind.value);
+   f.url.placeholder=f.kind.value==='logo'?'https://example.com/logos.json':f.kind.value==='epg'?'https://example.com/guide.xml':'https://example.com/channels.m3u';
+   $('sourceFormatHint').textContent=f.kind.value==='logo'?'JSON 名称映射，例如 {"CCTV1":"https://example.com/CCTV1.png"}；缺失时使用源台标。':f.kind.value==='epg'?'填写 XMLTV 或 GZIP 节目单的完整下载地址。':'填写 M3U 或 TXT 直播清单的完整下载地址。';
+ }
+ f.kind.onchange=showSourceFormat;showSourceFormat();
  f.priority.title='同频道资料冲突时，优先使用数值较小的订阅。';
  f.frequency.value=mode;
  function showHours(){
    f.hours.disabled=f.frequency.value!=='custom';$('sourceHours').hidden=f.hours.disabled;
    const hours=state.settings.minutes/60;
-   $('sourcePlanHint').textContent=f.frequency.value==='inherit'?(hours?'当前默认每 '+hours+' 小时更新，可在设置页调整。':'默认自动更新已关闭。'):f.frequency.value==='off'?'仅在手动更新时获取最新内容。':'按下方设置的小时数自动更新。';
+   $('sourcePlanHint').textContent=f.frequency.value==='inherit'?(hours?'当前默认每 '+hours+' 小时更新，可在设置页调整。':'默认定时更新已关闭。'):f.frequency.value==='off'?'关闭定时更新；保存或点击刷新仍会更新。':'按下方设置的小时数自动更新。';
  }
  f.frequency.onchange=showHours;showHours();
- if(id)$('deleteSource').onclick=safely(async()=>{if(!confirm('删除这个订阅及其频道快照？'))return;await api('delete',{id});$('dialog').close();await reload();});
+ if(id)$('deleteSource').onclick=safely(async()=>{if(!confirm('删除这个订阅及其已保存内容？'))return;await api('delete',{id});$('dialog').close();await reload();});
 }
 function bindTitleLogo(key){
  const slot=$('titleLogo');
+ slot.dataset.logoOwner=key;
  let lastPreview='';
  slot.hidden=false;
  function preview(){
@@ -873,13 +919,14 @@ function bindTitleLogo(key){
    lastPreview=signature;
    slot.replaceChildren();
    $('editLogoPreview').innerHTML=logoCell(c);
+   slot.disabled=!candidates.length;
    if(!candidates.length){slot.textContent='无台标';return;}
    const img=new Image();img.referrerPolicy='no-referrer';img.alt=c.label+'台标';
    let i=0;
    img.onerror=()=>{
      if(slot.firstChild!==img)return;
      if(++i<candidates.length){img.src=candidates[i];return;}
-     slot.textContent='加载失败';
+     slot.disabled=true;slot.textContent='加载失败';
    };
    slot.append(img);img.src=candidates[0];
  }
@@ -892,7 +939,7 @@ function editOptions(pairs,selected,defaultLabel){
 }
 function editChannel(key){
  const c=state.channels.find(x=>x.name===key), r=state.rules[key]||{};
- const routes=c.lines.map((line,i)=>`<div class="route"><div class="route-heading"><b>线路${i+1} · ${esc(line.from.join(' / '))}</b><span data-result-badge>${testBadge(c.name,line)}</span></div><p class="url">${addressLink(c,line,i)}<small class="source-name">${esc(detailSource(line))}</small></p><small data-probe-cell="${esc(line.url)}"><span class="last-probe">${detailMetrics(line)}</span><span class="live-probe metric-result"></span></small><div class="route-controls">${routeToggle(c,line)}<button type="button" data-test="${esc(line.url)}" ${busy?'disabled':''}>检测此线路</button>${hideButton('route',key,line.url)}${playButton(c,line)}</div></div>`).join('');
+ const routes=c.lines.map((line,i)=>`<div class="route"><div class="route-heading"><b>线路${i+1} · ${esc(line.from.join(' / '))}</b><span data-result-badge>${testBadge(c.name,line)}</span></div><p class="url">${addressLink(c,line,i)}<small class="source-name">${esc(detailSource(line))}</small></p><small data-probe-cell="${esc(line.url)}"><span class="last-probe">${detailMetrics(line)}</span><span class="live-probe metric-result"></span></small><div class="route-controls">${routeToggle(c,line)}<button type="button" data-test="${esc(line.url)}" ${busy?'disabled':''}>检测此线路</button>${hideButton('route',key,line.url,true)}${playButton(c,line)}</div></div>`).join('');
  const groups=[...new Set([...directoryGroups(),...Object.keys(state.hidden_groups||{})])].map(g=>[g,g]);
  const members=c.members.filter(m=>m!==key);
  const targets=state.channels.filter(ch=>ch.name!==key).map(ch=>[ch.name,ch.label===ch.name?ch.label:`${ch.label}（${ch.name}）`]);
@@ -1012,6 +1059,24 @@ function refreshDetailResults(){
    syncRouteToggle(box,r);
  }
 }
+function logoProgressText(progress){
+ const mode={off:'关闭',light:'浅色',dark:'深色',transparent:'透明'}[progress.mode]||'';
+ if(progress.phase==='waiting')return `台标优化等待检测完成 · ${progress.done}/${progress.total}`;
+ if(progress.running)return `台标优化 · ${mode} · ${progress.done}/${progress.total}`;
+ if(!progress.total)return '台标优化完成 · 暂无可处理台标';
+ return `台标优化完成 · 已就绪 ${progress.ready}/${progress.total}${progress.failed?' · 未能处理 '+progress.failed:''}`;
+}
+function paintLogoProgress(){
+ const progress=liveLogoJob,secondary=$('logoTaskProgress');
+ secondary.hidden=true;secondary.textContent='';
+ if(!progress)return;
+ if(liveJob?.running){
+   if(progress.running){secondary.textContent=logoProgressText(progress);secondary.hidden=false;}
+ }else if(progress.running||(progress.phase==='complete'&&Date.now()/1000-progress.finished_at<15)){
+   $('taskMessage').textContent=logoProgressText(progress);
+   $('taskProgress').textContent='';
+ }
+}
 function paintProgress(){
  const url=liveJob?.active_url;
  const channels=url?(state?.channels||[]).filter(c=>c.lines.some(r=>r.url===url)):[];
@@ -1028,6 +1093,7 @@ function paintProgress(){
      (liveJob.running?'进行中　':'任务　')+diagnosticText(liveJob.message)+(liveJob.running&&liveJob.total?'　'+liveJob.done+'/'+liveJob.total:'');
    $('taskProgress').textContent=url?`${route} · 整批第 ${liveJob.done+1}/${liveJob.total} 条 · ${sample}`:'';
  }
+ paintLogoProgress();
  for(const card of document.querySelectorAll('[data-card-name]')){
    const active=Boolean(url&&cardChannels.get(card.dataset.cardName)?.lines.some(r=>r.url===url));
    card.classList.toggle('testing',active);
@@ -1086,26 +1152,50 @@ function locateProbe(name){
    restoreDirectoryScroll();
  }
 }
+function syncSourceActions(job){
+ $('newSource').disabled=busy;
+ for(const button of document.querySelectorAll('[data-feed]'))button.disabled=busy;
+ for(const button of document.querySelectorAll('[data-source-refresh]')){
+   const id=+button.dataset.sourceRefresh;
+   const active=busy&&!job.probing&&['refresh','scheduled'].includes(job.action)&&(job.source_id===id||job.active_source_id===id);
+   button.disabled=busy||refreshingSources.has(id);
+   button.classList.toggle('is-updating',Boolean(active));button.setAttribute('aria-busy',String(Boolean(active)));
+ }
+}
 async function status(){
- const {job,logs,log_id}=await api('status?compact=1');liveJob=job;
+ const {job,logs,log_id,logo_beauty,logo_optimization,logo_cache_revision}=await api('status?compact=1');liveJob=job;liveLogoJob=logo_optimization||null;
  legacyLogs=log_id===undefined?(logs||[]):null;
  $('logKind').disabled=Boolean(legacyLogs);
  if(legacyLogs)$('logKind').value='history';
  latestLogVersion=JSON.stringify([log_id,job.log_epoch]);
  if($('logDialog').open&&logVersion!==latestLogVersion)await loadLogs(latestLogVersion);
  busy=job.running;$('sync').disabled=busy;updateProbeAction();
+ syncSourceActions(job);
  for(const button of document.querySelectorAll('[data-test]'))button.disabled=busy;
  for(const button of document.querySelectorAll('[data-source-toggle]'))button.disabled=busy||changingSources.has(+button.dataset.sourceToggle);
  $('probePicked').disabled=busy||!picked.size;
  if(wasRunning&&!job.running){await reload(job.action==='probe');}
  else if(revision!==job.revision){await reload(job.running||job.action==='probe'||revision===null);}
+ else if(logo_beauty!==undefined&&state?.settings.logo_beauty!==logo_beauty){await reload(true);}
+ else if(logo_cache_revision!==undefined&&state?.logo_cache_revision!==logo_cache_revision){await reload(true);}
  revision=job.revision;wasRunning=job.running;paintProgress();
 }
 async function launch(action,url,urls){await api('job',{action,url,urls});wasRunning=true;await status();}
 document.addEventListener('click',safely(async e=>{
+ const logoTrigger=e.target.closest('[data-logo-preview]');
+ if(logoTrigger){e.preventDefault();openLogoPreview(logoTrigger);return;}
  const batchItem=e.target.closest('[data-selection-key]');
  if(batchItem&&$('channels').classList.contains('batch-open')){e.preventDefault();toggleBatchItem(batchItem);return;}
  const d=e.target.dataset;
+ const refreshButton=e.target.closest('[data-source-refresh]');
+ if(refreshButton){
+   const id=+refreshButton.dataset.sourceRefresh;
+   if(busy||refreshingSources.has(id))return;
+   refreshingSources.add(id);refreshButton.disabled=true;
+   try{await api('job',{action:'refresh',source_id:id});wasRunning=true;await status();}
+   finally{refreshingSources.delete(id);await status();}
+   return;
+ }
  if(d.sourceToggle){
    const id=+d.sourceToggle,s=state.sources.find(s=>s.id===id);
    if(!s||busy||changingSources.has(id))return;
@@ -1291,6 +1381,7 @@ $('editor').onsubmit=safely(async e=>{e.preventDefault();
  if($('channelSettings')?.disabled)return;
  const form=e.target,fields=$('fields').firstElementChild;
  const saved=await editing(form);
+ if(saved?.refresh_started){wasRunning=true;await status();}
  await reload();
  if($('dialog').open&&$('fields').firstElementChild===fields){
    if(typeof saved==='string'){
@@ -1298,12 +1389,13 @@ $('editor').onsubmit=safely(async e=>{e.preventDefault();
      if(channel)editChannel(channel.name);else $('dialog').close();
    }else $('dialog').close();
  }
- notice('已保存');});
+ notice(saved?.refresh_started?'已保存，已发起该订阅更新':'已保存');});
 let settingsDirty=false;
 function probeModeChoice(cfg){
  return cfg.probe_mode==='pipeline'?'pipeline_dual':cfg.probe_mode==='continuous'?'continuous':'adaptive';
 }
 const OPTION_HELP={
+ logo_beauty:{off:'保留原图样式，保存即生效。',light:'透明图案叠浅底；近白台标保留对比描边，保存即处理。',dark:'统一深色背景、留白与视觉大小，保存即处理。',transparent:'透明画布，统一留白与视觉大小；原图自带底色保留，保存即处理。'},
  probe_mode:{
   adaptive:'效率优先：先快检，异常或曾不稳定的线路再连续检测；持续稳定性观察较少。',
   pipeline_dual:'兼顾效率与验证：粗筛后精测，最多并行两条；同网关串行，不达标线路单独复核。',
@@ -1318,7 +1410,7 @@ const OPTION_HELP={
 };
 function updateCriteriaFields(){
  const f=$('schedule').elements;
- for(const [field,id] of [['probe_mode','probeModeHint'],['criteria','probeCriteriaHint'],['mode','publishModeHint']]){
+ for(const [field,id] of [['probe_mode','probeModeHint'],['criteria','probeCriteriaHint'],['mode','publishModeHint'],['logo_beauty','logoBeautyHint']]){
    const select=f[field];
    $(id).textContent=OPTION_HELP[field][select.value]||'';
    if(field==='probe_mode'&&state&&select.value===probeModeChoice(state.settings)){
@@ -1344,11 +1436,11 @@ $('schedule').onsubmit=safely(async e=>{
  if(button.disabled)return;
  button.disabled=true;
  try{
-   const fields={probe_mode:f.probe_mode.value,hours:+f.hours.value,criteria:f.criteria.value,min_speed:+f.min_speed.value,min_height:+f.min_height.value,mode:f.mode.value,strict:f.strict.checked,auto_probe:f.auto_probe.checked};
+   const fields={probe_mode:f.probe_mode.value,hours:+f.hours.value,criteria:f.criteria.value,min_speed:+f.min_speed.value,min_height:+f.min_height.value,mode:f.mode.value,logo_beauty:f.logo_beauty.value,strict:f.strict.checked,auto_probe:f.auto_probe.checked};
    settingsDirty=false;
    try{await api('settings',fields);}catch(error){settingsDirty=true;throw error;}
    await reload();
-   if(!settingsDirty)$('saveStatus').textContent='设置已保存';
+   if(!settingsDirty)$('saveStatus').textContent=state.settings.logo_beauty==='off'?'设置已保存 · 保留原图样式':'设置已保存 · 台标样式已生效';
  }finally{button.disabled=false;}
 });
 function setupSubscriptionShare(){
@@ -1372,9 +1464,51 @@ setupSubscriptionShare();
 document.querySelector('[data-tab="channels"]').classList.add('active');
 async function poll(){
  try{await status();}catch(e){notice(e.message);}
- finally{setTimeout(poll,busy?800:2000);}
+ finally{setTimeout(poll,busy||liveLogoJob?.running?800:2000);}
 }
 document.addEventListener('visibilitychange',safely(async()=>{
  if(state&&!document.hidden)await reload(true);
 }));
 safely(async()=>{await reload();await poll();})();
+
+function logoPreviewSize(width,height){
+ const longest=Math.max(width,height);
+ const scale=Math.min(longest<96?Math.min(2,96/longest):1,300/width,220/height);
+ return {width:Math.round(width*scale),height:Math.round(height*scale)};
+}
+function setLogoPreviewImage(url,label){
+ const preview=$('logoPreviewImage');
+ preview.hidden=true;preview.removeAttribute('src');
+ $('logoPreviewStatus').textContent='正在加载台标…';
+ preview.onload=()=>{
+   const size=logoPreviewSize(preview.naturalWidth,preview.naturalHeight);
+   preview.style.width=size.width+'px';
+   $('logoPreviewDialog').style.width=Math.max(260,size.width+58)+'px';
+   preview.hidden=false;$('logoPreviewStatus').textContent='';
+ };
+ preview.onerror=()=>{$('logoPreviewStatus').textContent='台标暂时无法加载，请关闭后重试。';};
+ preview.referrerPolicy='no-referrer';preview.alt=label;
+ $('logoPreviewTitle').textContent=label+' · 预览';
+ preview.src=url;
+}
+function syncLogoPreview(){
+ const dialog=$('logoPreviewDialog');
+ if(!dialog.open)return;
+ const channel=state.channels.find(c=>c.name===dialog.dataset.owner),url=usableLogo(channel);
+ if(!url){dialog.close();return;}
+ if($('logoPreviewImage').getAttribute('src')!==url)setLogoPreviewImage(url,channel.label+'台标');
+}
+function openLogoPreview(trigger){
+ const img=trigger.querySelector('img');
+ if(!img?.getAttribute('src'))return;
+ $('logoPreviewDialog').dataset.owner=trigger.dataset.logoOwner;
+ setLogoPreviewImage(img.getAttribute('src'),img.alt||'频道台标');
+ $('logoPreviewDialog').showModal();
+}
+$('closeLogoPreview').onclick=()=>$('logoPreviewDialog').close();
+$('logoPreviewDialog').addEventListener('click',e=>{
+ if(e.target!==e.currentTarget)return;
+ const r=e.currentTarget.getBoundingClientRect();
+ if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)e.currentTarget.close();
+});
+$('logoPreviewDialog').addEventListener('close',()=>{const image=$('logoPreviewImage');image.onload=null;image.onerror=null;image.removeAttribute('src');$('logoPreviewStatus').textContent='';delete $('logoPreviewDialog').dataset.owner;});

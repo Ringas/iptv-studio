@@ -138,7 +138,8 @@ def classify_result(result):
     result['evidence']={**{key:{'state':'not_verified'} for key in ('entry','manifest','media','decode','live','qualification')},**result.get('evidence',{})}
     code=result.get('httpStatus')
     notes=' '.join(map(str,result.get('note',[]))).lower()
-    if code==429: category='rate_limited'
+    if result.get('upstreamCooldown') and code!=429: category='upstream_cooldown'
+    elif code==429: category='rate_limited'
     elif code==607 or any(word in notes for word in ('network policy','policy blocked','blocked by policy','网络策略','策略拦截')): category='network_restricted'
     elif code in (408,504) or any(word in notes for word in ('timeout','timed out','超时','etimedout','aborterror')): category='timeout'
     elif code in (401,403): category='access_denied'
@@ -150,7 +151,7 @@ def classify_result(result):
     if category:
         result['error_category']=category
         if category in ('network_restricted','timeout'):result.setdefault('retryable',True)
-        result['inconclusive']=category in ('rate_limited','network_restricted','timeout')
+        result['inconclusive']=category in ('rate_limited','network_restricted','timeout','upstream_cooldown')
     return result
 
 def qualification_policy(settings):
@@ -226,7 +227,7 @@ def route_mode(members,url,modes):
     values={modes.get((name,url)) for name in members}
     return 'off' if 'off' in values else 'on' if 'on' in values else 'auto'
 
-def build(sources, tests, overrides, route_modes=None, settings=None, profiles=None, hidden=None, epg_logos=None, restored_routes=(), hidden_groups=None, restored_channel_routes=(), hidden_channels=None, hidden_items=None):
+def build(sources, tests, overrides, route_modes=None, settings=None, profiles=None, hidden=None, epg_logos=None, restored_routes=(), hidden_groups=None, restored_channel_routes=(), hidden_channels=None, hidden_items=None, logo_subscriptions=None):
     channels={}
     hints=defaultdict(lambda:defaultdict(set))
     countries=defaultdict(lambda:defaultdict(set))
@@ -301,7 +302,12 @@ def build(sources, tests, overrides, route_modes=None, settings=None, profiles=N
         keys=logo_keys(c['epg'],c['label'],c['name'],*c['members'])
         for line in c['lines'].values():
             keys.extend(logo_keys(line['attrs'].get('tvg-id'),line['attrs'].get('tvg-name')))
-        logos=c['logo_candidates']
+        logos=[]
+        for key in dict.fromkeys(keys):
+            candidate=(logo_subscriptions or {}).get(key)
+            if candidate and candidate not in logos:logos.append(candidate)
+        logos.extend(url for url in c['logo_candidates'] if url not in logos)
+        c['logo_candidates']=logos
         for index in (subscription_logos,epg_logos or {}):
             for key in dict.fromkeys(keys):
                 candidate=index.get(key)

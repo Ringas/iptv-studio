@@ -1,0 +1,9 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+const source=fs.readFileSync('ui.js','utf8');const code=source.slice(source.indexOf('function logoProgressText('),source.indexOf('function paintProgress('));
+const elements={logoTaskProgress:{},taskMessage:{textContent:'正在检测 CCTV1'},taskProgress:{textContent:'检测进度 2/9'}};
+const ctx=vm.createContext({$:id=>elements[id],liveJob:{running:true},liveLogoJob:{running:true,phase:'waiting',mode:'light',done:2,total:8}});vm.runInContext(code,ctx);ctx.paintLogoProgress();
+assert.equal(elements.taskMessage.textContent,'正在检测 CCTV1');assert.equal(elements.taskProgress.textContent,'检测进度 2/9');assert.equal(elements.logoTaskProgress.hidden,false);assert.match(elements.logoTaskProgress.textContent,/等待检测完成.*2\/8/);
+ctx.liveJob.running=false;ctx.liveLogoJob.phase='processing';ctx.paintLogoProgress();assert.match(elements.taskMessage.textContent,/台标优化.*浅色.*2\/8/);assert.equal(elements.logoTaskProgress.hidden,true);
+ctx.liveLogoJob={running:false,phase:'complete',ready:7,failed:1,total:8,finished_at:Date.now()/1000};ctx.paintLogoProgress();assert.match(elements.taskMessage.textContent,/已就绪 7\/8.*未能处理 1/);
+ctx.liveJob.running=true;elements.taskMessage.textContent='正在检测';ctx.paintLogoProgress();assert.equal(elements.taskMessage.textContent,'正在检测');assert.equal(elements.logoTaskProgress.hidden,true);
+console.log('通过：检测主进度不被覆盖、台标等待提示、独立处理进度、失败汇总和完成态隐藏。');

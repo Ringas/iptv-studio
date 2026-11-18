@@ -16,6 +16,8 @@ from service import ROOT,DATA,LOCK,job,init,db,config,catalog,epg,selected,edit,
 from catalog import export,xmltv_stamp
 from catalog import xmlroot
 import webplay
+from service import logo_status
+from logos import cached_image, image_route, cache_revision
 from diagnostics import bind, event, exception as diagnostic_exception, runtime_timezone
 
 HOST=os.getenv('BIND','127.0.0.1')
@@ -115,6 +117,21 @@ class Handler(BaseHTTPRequestHandler):
             if not self.allow_network(): return
             if path=='/health':
                 self.send(200,'ok','text/plain'); return
+            if re.fullmatch(r'/logos/auto/[0-9a-f]{64}/(?:off|light|dark|transparent)\.png',path):
+                with db() as c:
+                    channel=next((ch for ch in catalog(c) if image_route(ch['original_logo_candidates'],path.rsplit('/',1)[1][:-4])==path),None)
+                    uploads={}
+                    for candidate in channel['original_logo_candidates'] if channel else []:
+                        if re.fullmatch(r'/logos/[0-9a-f]{64}\.png',candidate):
+                            row=c.execute('select png from channel_logos where digest=? limit 1',(candidate[7:-4],)).fetchone()
+                            if row:uploads[candidate]=row['png']
+                if not channel:self.send(404,'没有此台标','text/plain');return
+                try:
+                    from service import fetch
+                    data=cached_image(channel['original_logo_candidates'],path.rsplit('/',1)[1][:-4],DATA/'logo-cache',lambda address,limit:fetch(address,limit,timeout=8),lambda url:uploads[url])
+                    self.send(200,data,'image/png')
+                except (ValueError,OSError,KeyError):self.send(404,'台标暂时无法加载','text/plain')
+                return
             if re.fullmatch(r'/logos/[0-9a-f]{64}\.png',path):
                 with db() as c: row=c.execute('select png from channel_logos where digest=? limit 1',(path[7:-4],)).fetchone()
                 if row:self.send(200,row[0],'image/png')
@@ -144,10 +161,10 @@ class Handler(BaseHTTPRequestHandler):
                 except (BrokenPipeError,ConnectionResetError): pass
                 except Exception as exc:
                     webplay.record_error(parse_qs(url.query),exc)
-                    self.send(502,webplay.upstream_error(exc),'text/plain')
+                    self.send(502,json.dumps(webplay.failure_details(exc)),'application/json')
                 return
             if path=='/api/play-status':
-                self.send(200,json.dumps({'error':webplay.last_error(parse_qs(url.query).get('session',[''])[0])}),'application/json')
+                self.send(200,json.dumps(webplay.last_status(parse_qs(url.query).get('session',[''])[0])),'application/json')
                 return
             if path in ('/','/ui.js','/style.css','/hls.min.js'):
                 file=ROOT/({'/':'index.html','/ui.js':'ui.js','/style.css':'style.css','/hls.min.js':'hls.min.js'}[path])
@@ -158,6 +175,7 @@ class Handler(BaseHTTPRequestHandler):
                     hidden_groups={}
                     hidden_channels={}
                     hidden_items=[dict(r) for r in c.execute('select kind,name,url from hidden_items')]
+                    logo_cache_rev=cache_revision(DATA/'logo-cache')
                     channels=catalog(c,hidden_groups,hidden_channels,hidden_items)
                     settings=config(c)
                     settings['next']=c.execute('select min(next_update) from sources where enabled and next_update>0').fetchone()[0] or 0
@@ -167,14 +185,14 @@ class Handler(BaseHTTPRequestHandler):
                     for row in c.execute('select source_id,url from playlist_epg order by rowid'):
                         linked.setdefault(row['source_id'],[]).append(row['url'])
                     for source in sources:source['guide_urls']=linked.get(source['id'],[])
-                    res={'timezone':runtime_timezone().key,'preview':os.getenv('STUDIO_PREVIEW')=='1','settings':settings,'channels':channels,'exported':len(active),'lines':sum(len(ch['lines']) for ch in active),
+                    res={'logo_cache_revision':logo_cache_rev,'timezone':runtime_timezone().key,'preview':os.getenv('STUDIO_PREVIEW')=='1','settings':settings,'channels':channels,'exported':len(active),'lines':sum(len(ch['lines']) for ch in active),
                          'sources':sources,'password_mode':'deployment' if PASSWORD else 'enabled' if c.execute('select 1 from admin_access').fetchone() else 'off',
                          'hidden_groups':hidden_groups,'hidden_channels':hidden_channels,
                          'hidden':hidden_items,
                          'rules':{r[0]:json.loads(r[1]) for r in c.execute('select * from rules')}}
                 elif path=='/api/status':
                     with LOCK: current=job.copy()
-                    res={'job':current,'log_id':c.execute('select max(id) from logs').fetchone()[0]}
+                    res={'job':current,'logo_cache_revision':cache_revision(DATA/'logo-cache'),'logo_optimization':logo_status(),'logo_beauty':config(c).get('logo_beauty','off'),'log_id':c.execute('select max(id) from logs').fetchone()[0]}
                     if 'compact' not in parse_qs(url.query):
                         res['logs']=[dict(r) for r in c.execute('select id,ts,message from logs order by id desc limit 25')]
                 elif path=='/api/logs':
@@ -221,7 +239,7 @@ class Handler(BaseHTTPRequestHandler):
                 if line is None: raise ValueError('没有此频道线路，请刷新频道目录')
                 try: result=webplay.new_session({**line,'channel':payload.get('name','')})
                 except Exception as exc:
-                    self.send(502,webplay.upstream_error(exc),'text/plain');return
+                    self.send(502,json.dumps(webplay.failure_details(exc)),'application/json');return
                 self.send(200,json.dumps(result),'application/json');return
             elif self.path=='/api/close-play':
                 webplay.close_session(str(payload.get('session','')))
@@ -242,9 +260,16 @@ class Handler(BaseHTTPRequestHandler):
                         c.execute('insert or replace into admin_access values(1,?,?)',(salt,verifier))
                     else:
                         c.execute('delete from admin_access')
-            elif self.path=='/api/job': start(payload['action'],payload.get('url'),payload.get('urls'))
+            elif self.path=='/api/job': start(payload['action'],payload.get('url'),payload.get('urls'),payload.get('source_id'))
             elif self.path=='/api/stop-probe': stop_probe(payload.get('run_id'),payload.get('url'))
-            elif self.path in ('/api/clear-logs','/api/settings','/api/source','/api/source-state','/api/delete','/api/channel','/api/channel-logo','/api/channels','/api/route','/api/routes','/api/hide-routes','/api/restore-routes','/api/hide-channels','/api/visibility'):
+            elif self.path=='/api/source':
+                # Commit the saved source before the worker reads it; reserve the task
+                # under the same lock so a scheduler tick cannot take its slot.
+                with LOCK:
+                    source_id=edit('source',payload)
+                    start('refresh',source_id=source_id)
+                self.send(200,json.dumps({'ok':True,'source_id':source_id,'refresh_started':True}),'application/json');return
+            elif self.path in ('/api/clear-logs','/api/settings','/api/source-state','/api/delete','/api/channel','/api/channel-logo','/api/channels','/api/route','/api/routes','/api/hide-routes','/api/restore-routes','/api/hide-channels','/api/visibility'):
                 edit(self.path.split('/')[-1],payload)
             else:
                 self.send(404,'未知操作','text/plain');return

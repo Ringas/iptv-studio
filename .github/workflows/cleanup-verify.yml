@@ -1,0 +1,97 @@
+name: 清理前后镜像回归对照
+on:
+  push:
+    branches: ['verify/cleanup-*']
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: 清理前隔离基线的完整提交 SHA
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      BASELINE: ${{ inputs.baseline || 'a33f69989a26db1c936223b11930b64b8edf54bc' }}
+      OUT: /tmp/iptv-cleanup-validation
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 准备隔离基线与发行白名单
+        run: |
+          set -euo pipefail
+          [[ "$BASELINE" =~ ^[0-9a-f]{40}$ ]]
+          mkdir -p "$OUT/before"
+          git archive "$BASELINE" | tar -x -C "$OUT/before"
+          python3 "$OUT/before/scripts/package_release.py" v0.0.0 "$OUT/baseline"
+          python3 scripts/package_release.py v0.0.0 "$OUT/candidate"
+      - name: 构建清理前后镜像
+        run: |
+          set -euo pipefail
+          docker build -t iptv-before "$OUT/baseline/context" > "$OUT/build-before.log" 2>&1
+          docker build --label "org.opencontainers.image.revision=$GITHUB_SHA" --label 'org.opencontainers.image.licenses=GPL-3.0-only' -t iptv-after "$OUT/candidate/context" > "$OUT/build-after.log" 2>&1
+      - name: 验证两版启动、解码、时区、权限和持久化
+        run: |
+          set -euo pipefail
+          python3 scripts/smoke_image.py iptv-before "$OUT/baseline/context" > "$OUT/smoke-before.log" 2>&1
+          python3 scripts/smoke_image.py iptv-after "$OUT/candidate/context" > "$OUT/smoke-after.log" 2>&1
+      - name: 两版镜像内完整隔离回归
+        run: |
+          set -euo pipefail
+          docker run --init --rm --network none --mount "type=bind,source=$OUT/before,target=/verify,readonly" --workdir /verify iptv-before python3 scripts/verify_release.py > "$OUT/regression-before.log" 2>&1 &
+          before_pid=$!
+          docker run --init --rm --network none --mount "type=bind,source=$GITHUB_WORKSPACE,target=/verify,readonly" --workdir /verify iptv-after python3 scripts/verify_release.py > "$OUT/regression-after.log" 2>&1 &
+          after_pid=$!
+          before_status=0; wait "$before_pid" || before_status=$?
+          after_status=0; wait "$after_pid" || after_status=$?
+          test "$before_status" -eq 0 && test "$after_status" -eq 0
+      - name: 对比频道、门槛、手动启停与导出快照
+        run: |
+          set -euo pipefail
+          for stage in before after; do
+            docker run --rm --network none --mount "type=bind,source=$GITHUB_WORKSPACE/scripts/differential_catalog.py,target=/tmp/differential_catalog.py,readonly" -e PYTHONPATH=/app "iptv-$stage" python3 /tmp/differential_catalog.py > "$OUT/catalog-$stage.json"
+          done
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          root=Path(os.environ['OUT'])
+          before=json.loads((root/'catalog-before.json').read_text())
+          after=json.loads((root/'catalog-after.json').read_text())
+          assert before==after,'业务快照不一致'
+          print(f'{len(before)} 组业务快照完全一致')
+          PY
+      - name: 同机交替对比实际下载解码与测速判定
+        run: |
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+          python3 scripts/differential_detection.py "$OUT/detector" > "$OUT/detection.log" 2>&1
+          cp "$OUT/detector/differential.json" "$OUT/detection-comparison.json"
+      - name: 核对保留运行组件逐文件一致
+        run: |
+          set -euo pipefail
+          for stage in before after; do
+            docker run --rm --network none --mount "type=bind,source=$GITHUB_WORKSPACE/scripts,target=/audit,readonly" "iptv-$stage" python3 /audit/audit_runtime.py snapshot > "$OUT/runtime-$stage.json"
+          done
+          python3 scripts/audit_runtime.py compare "$OUT/runtime-before.json" "$OUT/runtime-after.json" > "$OUT/runtime-comparison.json"
+          docker image inspect iptv-before iptv-after > "$OUT/images.json"
+          docker save iptv-after -o "$OUT/verified-image.tar"
+          sha256sum "$OUT/verified-image.tar" > "$OUT/verified-image.sha256"
+          printf '%s' "$GITHUB_SHA" > "$OUT/verified-commit.txt"
+      - name: 保存日志与已验证镜像
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cleanup-validation
+          path: |
+            /tmp/iptv-cleanup-validation/*.log
+            /tmp/iptv-cleanup-validation/*.json
+            /tmp/iptv-cleanup-validation/verified-*
+          retention-days: 3

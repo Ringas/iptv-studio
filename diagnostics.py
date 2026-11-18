@@ -82,7 +82,7 @@ def log_type(name, explicit=None):
 def event_style(name, level, result=None, content_type=None):
     category={'record.probe':'检测','record.refresh':'更新','record.history':'操作'}.get(name)
     if category is None:
-        category={'probe':'检测','refresh':'更新','play':'播放','route':'线路','server':'服务','http':'访问','scheduler':'计划','task':'任务'}.get(name.split('.')[0],'运行')
+        category={'probe':'检测','refresh':'更新','play':'播放','route':'线路','server':'服务','http':'访问','scheduler':'计划','logo':'台标','task':'任务'}.get(name.split('.')[0],'运行')
     label=result if result in ('通过','成功','失败','未通过','部分失败','未能验证','待复测','已跳过','已终止') else {'DEBUG':'诊断','INFO':'信息','WARNING':'提醒','ERROR':'错误','CRITICAL':'错误'}.get(level,'信息')
     return category,label,log_type(name,content_type)
 
@@ -164,7 +164,7 @@ def task_context(job):
             started = time.monotonic()
             with bind(task_id=job.get('run_id'), action=action):
                 label={'probe':'线路检测','refresh':'订阅更新','scheduled':'计划更新'}.get(action,'后台任务')
-                event('task.started', '开始'+label+('（所选线路）' if requested is not None else ''), selected_count=None if requested is None else len(requested))
+                event('task.started', '开始'+label+(('（所选订阅）' if action=='refresh' else '（所选线路）') if requested is not None else ''), selected_count=None if requested is None else len(requested))
                 try:
                     return function(action, requested)
                 finally:

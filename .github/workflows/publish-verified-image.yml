@@ -1,0 +1,80 @@
+name: 发布已验证镜像
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 成功的「清理前后镜像回归对照」运行编号
+        type: string
+        required: true
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: iptv-release
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_ID: ${{ inputs.run_id }}
+      IMAGE: talktoo/iptv-studio
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 核实验证来源与运行文件未变化
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          gh run view "$RUN_ID" --json conclusion,headSha,workflowName > /tmp/run.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          run=json.loads(Path('/tmp/run.json').read_text())
+          assert run['conclusion']=='success' and run['workflowName']=='清理前后镜像回归对照'
+          PY
+          verified=$(python3 -c 'import json;print(json.load(open("/tmp/run.json"))["headSha"])')
+          [[ "$verified" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$verified" HEAD
+          mapfile -t runtime < <(sed -n 's/^!//p' .dockerignore)
+          git diff --exit-code "$verified" HEAD -- .dockerignore "${runtime[@]}" scripts
+          echo "VERIFIED_SHA=$verified" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=build-${verified:0:12}" >> "$GITHUB_ENV"
+          gh run download "$RUN_ID" --name cleanup-validation --dir /tmp/verified
+          test "$(cat /tmp/verified/verified-commit.txt)" = "$verified"
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          root=Path('/tmp/verified')
+          with (root/'verified-image.tar').open('rb') as f:
+              assert hashlib.file_digest(f,'sha256').hexdigest()==(root/'verified-image.sha256').read_text().split()[0]
+          PY
+          docker load -i /tmp/verified/verified-image.tar
+          test "$(docker inspect iptv-after --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$verified"
+      - name: 再验已保存镜像并推送
+        env:
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 scripts/package_release.py v0.0.0 /tmp/package
+          python3 scripts/smoke_image.py iptv-after /tmp/package/context
+          printf '%s' "$HUB_TOKEN" | docker login -u talktoo --password-stdin
+          trap 'docker logout >/dev/null' EXIT
+          docker tag iptv-after "$IMAGE:$IMAGE_TAG"
+          docker push "$IMAGE:$IMAGE_TAG"
+          expected=$(docker inspect iptv-after --format '{{.Id}}')
+          docker pull "$IMAGE:$IMAGE_TAG"
+          test "$(docker inspect "$IMAGE:$IMAGE_TAG" --format '{{.Id}}')" = "$expected"
+          docker tag "$IMAGE:$IMAGE_TAG" "$IMAGE:latest"
+          docker push "$IMAGE:latest"
+          docker pull "$IMAGE:latest"
+          test "$(docker inspect "$IMAGE:latest" --format '{{.Id}}')" = "$expected"
+          python3 scripts/smoke_image.py "$IMAGE:latest" /tmp/package/context
