@@ -1,4 +1,4 @@
-name: 核对两版保留组件内容完全一致
+name: 核对正式发布镜像与已验证测试版内容一致
 on:
   push:
     branches: ['audit/runtime-slim-20261118']
@@ -25,7 +25,7 @@ jobs:
                   if p.is_symlink():files[str(p)]={'link':os.readlink(p)}
                   elif p.is_file():files[str(p)]={'size':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}
           print(json.dumps(files,sort_keys=True))'''
-          for label,image in [('baseline','talktoo/iptv-studio:v1.1.3'),('candidate','talktoo/iptv-studio:slim-test-55f8cf7')]:
+          for label,image in [('baseline','talktoo/iptv-studio:slim-test-55f8cf7'),('candidate','talktoo/iptv-studio:v1.1.4')]:
               subprocess.run(['docker','pull',image],check=True)
               manifests[label]=json.loads(subprocess.check_output(['docker','run','--rm','--network','none','--read-only','--entrypoint','python3',image,'-c',code]))
           a,b=manifests['baseline'],manifests['candidate']
@@ -33,7 +33,14 @@ jobs:
           result={'added':added,'removed':removed,'changed':changed,'manifests':manifests}
           Path('content-comparison.json').write_text(json.dumps(result,indent=2))
           assert not added,added
-          assert changed==['/app/service.py','/app/style.css','/app/ui.js'],changed
+          assert not removed,removed
+          assert not changed,changed
+          subprocess.run(['docker','pull','talktoo/iptv-studio:latest'],check=True)
+          latest=json.loads(subprocess.check_output(['docker','image','inspect','talktoo/iptv-studio:latest']))[0]
+          version=json.loads(subprocess.check_output(['docker','image','inspect','talktoo/iptv-studio:v1.1.4']))[0]
+          assert latest['Id']==version['Id'],(latest['Id'],version['Id'])
+          assert latest['Config']['Labels']['org.opencontainers.image.revision']=='953b09cdf5b9c45ac6f71d21cef4d33f56a72423'
+          Path('published-tags.json').write_text(json.dumps({'latest':latest['RepoDigests'],'v1.1.4':version['RepoDigests'],'revision':latest['Config']['Labels']['org.opencontainers.image.revision']},indent=2))
           for name in ('node','ffmpeg','python3.13'):assert a['/usr/local/bin/'+name]==b['/usr/local/bin/'+name]
           print(json.dumps({'added':len(added),'removed':len(removed),'changed':changed,'retained_runtime_files_identical':True},ensure_ascii=False))
           PY
@@ -41,4 +48,6 @@ jobs:
         if: always()
         with:
           name: runtime-content-comparison
-          path: content-comparison.json
+          path: |
+            content-comparison.json
+            published-tags.json
