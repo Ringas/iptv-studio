@@ -33,12 +33,13 @@ class Fixture(BaseHTTPRequestHandler):
   elif case=='corrupt':body=b'not video data'*100
   else:
    key=case if case in media else 'good720';body=media[key][int(leaf.split('.')[0])%len(media[key])]
+  if case=='lowrate' and leaf!='entry':body=body[:-len(padding)]+padding[:188*256]
   self.send_response(status);self.send_header('Content-Length',str(len(body)))
   self.send_header('Content-Type','application/vnd.apple.mpegurl' if leaf=='entry' and status==200 else 'video/mp2t')
   if status==429:self.send_header('Retry-After','2')
   try:
    self.end_headers()
-   if case=='slow' and leaf!='entry':
+   if case in ('slow','lowrate') and leaf!='entry':
     for pos in range(0,len(body),4096):self.wfile.write(body[pos:pos+4096]);self.wfile.flush();time.sleep(.08)
    else:self.wfile.write(body)
   except OSError:pass
@@ -69,10 +70,13 @@ def validate(case,mode,r):
   assert r['error_category']=={'rate429':'rate_limited','blocked607':'network_restricted','policy403':'network_restricted','timeout':'timeout'}[case],r
  if case in ('notfound','corrupt','slow'):assert r['assessment']!='保留',r
  if case=='slow':assert r.get('speed',0)<=100,r
+ if case=='lowrate':assert 0<r.get('speed',0)<=100 and r['assessment']=='速率未达标',r
  if case=='frozen':
   assert not r.get('advanced') and r.get('quality')!='流畅',r
   if mode=='pipeline':assert r['assessment']!='保留',r
-cases=[(case,mode) for mode in ('quick','pipeline','continuous') for case in ('good720','good1080','low480','rate429','blocked607','policy403','notfound','corrupt')]+[('slow','quick'),('timeout','quick'),('frozen','pipeline'),('frozen','continuous'),('tls720','quick'),('tls720','continuous')]
+cases=[(case,mode) for mode in ('quick','pipeline','continuous') for case in ('good720','good1080','low480','rate429','blocked607','policy403','notfound','corrupt')]+[('slow','quick'),('timeout','quick'),('frozen','pipeline'),('frozen','continuous'),('tls720','quick'),('tls720','continuous')]+[('lowrate',mode) for mode in ('quick','pipeline','continuous')]
+if os.getenv('CASES_FILTER'):cases=[pair for pair in cases if pair[0] in os.environ['CASES_FILTER'].split(',')]
+assert cases,'没有匹配的测试样本'
 report={'images':images,'image_ids':{label:{'id':info['Id'],'repo_digests':info.get('RepoDigests',[])} for label,info in metadata.items()},'policy':{'criteria':'both','min_speed':100,'min_height':720},'fixture_sha256':hashes,'pairs':[],'differences':[],'validation_errors':[]}
 try:
  for index,(case,mode) in enumerate(cases):

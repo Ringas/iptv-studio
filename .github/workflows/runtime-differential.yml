@@ -82,7 +82,9 @@ jobs:
           assert a==b,'频道状态、门槛边界或订阅导出出现差异'
           for label in ('baseline','candidate'):
               assert '全部 41 项隔离回归通过。' in (p/f'differential-{label}/{label}-regression.log').read_text()
-          d=json.loads((p/'differential-detector/differential.json').read_text())
-          assert len(d['pairs'])==30 and not d['differences'] and not d['validation_errors'],d
+          reports=list((p/'differential-detector').rglob('differential.json'))
+          assert len(reports)==1,reports
+          d=json.loads(reports[0].read_text())
+          assert len(d['pairs'])==33 and not d['differences'] and not d['validation_errors'],d
           print(f'两版完整回归通过；{len(a)} 组频道/边界/导出快照一致；{len(d["pairs"])} 组实际检测结果一致。')
           PY

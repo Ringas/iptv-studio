@@ -1,0 +1,83 @@
+name: 补测完整低速样本并汇总两版对照证据
+on:
+  push:
+    branches: ['audit/runtime-slim-20261118']
+    paths: ['.github/workflows/runtime-differential-summary.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  lowrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: 补测可完整解码的低速线路
+        env:
+          CASES_FILTER: lowrate
+        run: |
+          set -euo pipefail
+          python3 scripts/differential_detection.py "$RUNNER_TEMP/lowrate" | tee "$RUNNER_TEMP/lowrate.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: differential-lowrate
+          path: |
+            ${{ runner.temp }}/lowrate/differential.json
+            ${{ runner.temp }}/lowrate.log
+  summary:
+    needs: lowrate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 44219111945
+          github-token: ${{ github.token }}
+          path: results/original
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 44219538551
+          github-token: ${{ github.token }}
+          path: results/content
+      - uses: actions/download-artifact@v4
+        with:
+          name: differential-lowrate
+          path: results/lowrate
+      - name: 严格汇总完整功能、判定及运行组件对照
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('results')
+          def one(folder,name):
+              files=list(folder.rglob(name));assert len(files)==1,files
+              return files[0]
+          original=root/'original'
+          a=json.loads(one(original,'baseline-catalog.json').read_text())
+          b=json.loads(one(original,'candidate-catalog.json').read_text())
+          assert a==b
+          for label in ('baseline','candidate'):
+              assert '全部 41 项隔离回归通过。' in one(original,label+'-regression.log').read_text()
+          d=json.loads(one(original,'differential.json').read_text())
+          low=json.loads(one(root/'lowrate','differential.json').read_text())
+          assert len(d['pairs'])==30 and not d['differences'] and not d['validation_errors']
+          assert len(low['pairs'])==3 and not low['differences'] and not low['validation_errors']
+          assert low['image_ids']==d['image_ids']
+          content=json.loads(one(root/'content','content-comparison.json').read_text())
+          assert not content['added']
+          assert content['changed']==['/app/service.py','/app/style.css','/app/ui.js']
+          low_rows=[{'mode':p['mode'],'measurements':{k:{'speed_kBps':v['raw']['speed'],'assessment':v['raw']['assessment'],'seconds':v['wall_seconds']} for k,v in p['results'].items()}} for p in low['pairs']]
+          result={'image_ids':d['image_ids'],'regression_passed_per_image':41,'exact_snapshots':len(a),'actual_detector_pairs':len(d['pairs'])+len(low['pairs']),'detector_differences':0,'expected_result_errors':0,'changed_files':content['changed'],'retained_runtime_content_identical':True,'lowrate_samples':low_rows,'scope':'Controlled fixed local HLS + real decoder/DNS/TLS; not a complete real-world subscription accuracy or universal performance guarantee.'}
+          Path('comparison-summary.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
+          print(json.dumps(result,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: differential-comparison-summary
+          path: comparison-summary.json
