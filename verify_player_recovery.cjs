@@ -10,6 +10,7 @@ async function fixture({status={},playError}={}){
  }
  const ctx=vm.createContext({state:{channels:[{name:'C',label:'C',lines:[{url:'http://fixture.invalid/live',enabled:true,platform:'fixture',speed_display:'200 KB/s'}]}]},$:id=>elements[id],esc:x=>String(x),sourceNames:()=>'',closePopup(){},loadHls:async()=>Hls,
   setTimeout(fn,ms){timers.set(++seq,{fn,ms});return seq},clearTimeout(id){timers.delete(id)},api:async(path,data)=>{calls.push([path,data]);if(path==='play'){if(playError)throw playError;return {kind:'hls',session:'s'+calls.length,url:'/media'}}if(path.startsWith('play-status'))return status;return {};}});
+ vm.runInContext(src.slice(src.indexOf('const displayOrders='),src.indexOf('function filtered(')),ctx);
  vm.runInContext('var playerVersion=0,playerRoute=null,playerSession=null,playerEngine=null,playerRetryTimer=null;'+src.slice(src.indexOf('function releasePlayer'),src.indexOf("$('closePlayer').onclick")),ctx);
  await ctx.openPlayer('C','http://fixture.invalid/live');
  const error=async(data={})=>engines.at(-1).events.error(null,{type:'network',fatal:false,response:{code:502},frag:{},...data});
