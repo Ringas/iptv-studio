@@ -17,7 +17,6 @@ dialog{border:1px solid var(--line);border-radius:13px;padding:18px 20px;width:m
 @media(max-width:720px){header{padding:0 12px}main{padding:12px 10px 30px}main>section{padding:12px}.heading{align-items:flex-start;flex-wrap:wrap;gap:10px}.heading h1{font-size:23px}.actions button{padding:5px 8px;font-size:12px}#stats strong{font-size:20px}#stats>div{padding:0 8px}.view-switch button{padding:4px 8px}.filters input{width:45%;min-width:100px}.filters select{min-width:80px;max-width:38%}.bulk-actions{margin-left:0}.card-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr))}}
 .card-grid{grid-template-columns:repeat(3,minmax(0,1fr))}@media(max-width:960px){.card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:580px){.card-grid{grid-template-columns:1fr}}
 
-
 .policies [data-test]{color:#176747;border-color:#b7d6c3;background:white}#probePicked:enabled{background:var(--green);border-color:var(--green);color:white}.bulk-actions{flex-wrap:wrap}
 
 .group-head{flex-wrap:wrap}.group-health{display:inline-flex;gap:6px}.group-health button{font-size:11px;border-radius:12px;padding:2px 8px;line-height:1.5;background:#f0f2ef;color:#58685f;border:1px solid transparent}.group-health [data-health=pass]{background:#e4f4e9;color:#1b6943}.group-health [data-health=fail]{background:#fcecec;color:#a63238}.group-health button:hover,.group-health [aria-pressed=true]{border-color:currentColor}.group-health [aria-pressed=true]{font-weight:700;box-shadow:inset 0 0 0 1px currentColor}#exitHealth{font-size:12px;color:var(--green);background:var(--tint)}.source-name{display:block;margin-top:4px;font-size:11px;color:var(--muted);overflow-wrap:anywhere}
@@ -159,7 +158,6 @@ button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visi
 .table-scroll :is(.channel-link,.address-link,.tiny-link){padding-inline-start:0;border-inline-start:0}
 .route-column-head .col-group,.table-scroll .col-group{padding-inline:12px 0}
 
-
 .wordmark svg{flex:none;filter:drop-shadow(0 2px 4px #0066cc25)}
 .app-rail nav svg{color:var(--accent)}
 .page-heading h1{font-weight:720;letter-spacing:-.035em}
@@ -238,7 +236,6 @@ dialog::backdrop{backdrop-filter:blur(3px)}
 .export-list i{grid-column:2;grid-row:1/3;font-style:normal;color:var(--accent)}
 @media(max-width:920px){.settings-layout{grid-template-columns:1fr}.settings-side{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.settings-side{grid-template-columns:1fr}.pref-panel{padding:16px}.settings-layout{gap:18px}#settings .pref-row{gap:10px}.pref-row select{max-width:60%}.pref-save button{flex:1}.pref-save span:empty{display:none}}
-
 
 /* Shared materials: floating controls above opaque, quiet reading surfaces. */
 :root{
@@ -335,7 +332,6 @@ dialog::backdrop{background:#182b413e;backdrop-filter:blur(4px)}
 
 .standalone-routes h3{margin:12px 0 8px;font-size:16px}
 
-
 /* Use the catalog's measurement styles in every route view. */
 .metric-result{color:var(--ink);font:400 12px/1.55 var(--font-ui);font-variant-numeric:tabular-nums}
 .metric-result.retest{--result-ink:#795519;--result-fill:#fff5da;--result-edge:#e5d29c}
@@ -375,8 +371,9 @@ button.state-switch::after{content:"";position:absolute;left:6px;top:50%;transfo
 button.state-switch[aria-checked=true]{color:#14643b}
 button.state-switch[aria-checked=true]::before{background:#248657}
 button.state-switch[aria-checked=true]::after{left:18px}
-button.state-switch:enabled:hover{background:var(--fill);border-color:var(--line);color:var(--ink)}
-button.state-switch:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+button.state-switch:enabled:hover{background:transparent;border-color:transparent;color:var(--muted)}
+button.state-switch:focus,button.state-switch:focus-visible{outline:none;box-shadow:none}
+button.state-switch:focus-visible::before{outline:2px solid var(--accent);outline-offset:3px}
 button.state-switch:disabled{opacity:.55;cursor:wait}
 .policies{flex-wrap:wrap;align-items:center}
 
@@ -645,34 +642,27 @@ body[data-logo-beauty="dark"] .station-mark,body[data-logo-beauty="dark"] .stati
 
 /* Shared button system: 36px regular, 32px compact, 28px inline controls. */
 :root{--control-height:36px;--control-compact:32px;--control-small:28px;--control-radius:8px;--control-gap:8px;--control-icon:16px}
-.page-heading .actions,.feed-actions,.route-controls,.policies,.detail-edit-actions,.source-editor-footer>div,.bar .actions,.task-actions,.bulk-actions{align-items:center;gap:var(--control-gap)}
-:where(.page-heading .actions,.feed-actions,.source-editor-footer,.detail-edit-actions,.route-controls,.policies,.task-actions,.bulk-actions,.log-tools,.hidden-selection) button:not(.state-switch),
-:where(.bar) > button,:where(.bar .actions,.bar form)>button,#apply,#savePassword,.pref-save button,.source-empty>button,#resetSearch,#openLogs,.hidden-heading>button,.hidden-route>button{
+.page-heading .actions,.feed-actions,.source-editor-footer>div,.bar .actions:not(#editor .actions),.task-actions{align-items:center;gap:var(--control-gap)}
+:where(.page-heading .actions,.feed-actions,.source-editor-footer,.task-actions,.log-tools,.hidden-selection) button:not(.state-switch),
+:where(.bar) > button,:where(.bar .actions,.bar form):not(#editor .actions)>button,#apply,#savePassword,.pref-save button,.source-empty>button,#resetSearch,#openLogs,.hidden-heading>button,.hidden-route>button{
  display:inline-flex;align-items:center;justify-content:center;gap:6px;box-sizing:border-box;
  height:var(--control-height);min-height:var(--control-height);padding:0 12px;
  font-size:13px;font-weight:550;line-height:20px;border-radius:var(--control-radius);white-space:nowrap;vertical-align:middle
 }
 /* Primary and secondary buttons share geometry, with colour conveying priority. */
-:where(.feed-actions,.source-editor-footer,.detail-edit-actions,.route-controls,.policies,.log-tools,.hidden-selection) button:not(.primary,.state-switch,.play-route,.source-delete,[data-stop-all]){
+:where(.feed-actions,.source-editor-footer,.log-tools,.hidden-selection) button:not(.primary,.state-switch,.play-route,.source-delete,[data-stop-all]){
  background:var(--surface);border:1px solid var(--button-edge);color:var(--ink)
 }
-:where(.feed-actions,.source-editor-footer,.detail-edit-actions,.route-controls,.policies,.log-tools,.hidden-selection) button:not(.primary,.state-switch,.play-route,.source-delete,[data-stop-all]):enabled:hover{
+:where(.feed-actions,.source-editor-footer,.log-tools,.hidden-selection) button:not(.primary,.state-switch,.play-route,.source-delete,[data-stop-all]):enabled:hover{
  background:var(--tint);border-color:#aac9ec;color:var(--accent)
 }
-.feed-actions,.route-controls,.policies,.task-actions,.bulk-actions,.log-tools,.hidden-selection{--control-height:var(--control-compact)}
+.feed-actions,.task-actions,.log-tools,.hidden-selection{--control-height:var(--control-compact)}
 .feed-actions>button,.source-refresh{height:var(--control-compact);min-height:var(--control-compact)}
 .feed-actions>.source-refresh{width:var(--control-compact);padding:0}
 .source-refresh svg,.subscribe svg{width:var(--control-icon);height:var(--control-icon);display:block;flex:none}
-.route-controls>button:not(.state-switch),.policies>button:not(.state-switch){height:var(--control-compact);min-height:var(--control-compact);padding:0 6px;font-size:12px;line-height:18px}
-.route-controls,.policies{gap:6px}
-button.state-switch{height:var(--control-compact);min-height:var(--control-compact);border-radius:var(--control-radius)}
-.route-controls>.play-route,.policies>.play-route{width:var(--control-compact);flex:0 0 var(--control-compact);padding:0;border-radius:var(--control-radius)}
-.route-controls>.play-route{margin-inline-start:0}
-.route-controls>.play-route svg,.policies>.play-route svg{width:var(--control-icon);height:var(--control-icon)}
 /* Inspector headers stay compact; confirmation actions keep the regular size. */
-:where(dialog,#infoPopup)>.bar{--control-height:var(--control-compact);align-items:center}
-#editor>.bar{--control-height:var(--control-compact);align-items:center}
-.source-editor-footer,.detail-edit-actions{--control-height:36px}
+:where(#infoPopup)>.bar{--control-height:var(--control-compact);align-items:center}
+.source-editor-footer{--control-height:36px}
 .source-editor-footer>div{align-items:center}
 #closePopup{height:var(--control-compact);min-height:var(--control-compact);padding:0 10px}
 #clearLogs,.log-tools select{height:var(--control-compact);min-height:var(--control-compact);font-size:12px;line-height:18px;border-radius:var(--control-radius)}
@@ -694,10 +684,6 @@ button.state-switch{height:var(--control-compact);min-height:var(--control-compa
 .channel-card button.card-hide svg{width:var(--control-icon);height:var(--control-icon)}
 .channel-card .play-route{width:var(--control-compact);height:var(--control-compact);flex-basis:var(--control-compact);padding:0}
 .channel-card .play-route svg{width:var(--control-icon);height:var(--control-icon)}
-.studio-shell>.bulk{align-items:center;gap:var(--control-gap)}
-.studio-shell>.bulk :is(#selectVisible,#clearPicks),.studio-shell>.bulk .bulk-actions>button{height:var(--control-compact);min-height:var(--control-compact);padding-block:0;line-height:18px;border-radius:var(--control-radius)}
-.studio-shell>.bulk #bulkDone{width:var(--control-compact);height:var(--control-compact);min-height:var(--control-compact);padding:0;border-radius:var(--control-radius)}
-#bulkDone svg{width:var(--control-icon);height:var(--control-icon)}
 #playerLine,#closePlayer,#retryPlayer{height:var(--control-compact);min-height:var(--control-compact);border-radius:var(--control-radius)}
 #closePlayer{width:var(--control-compact);padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:24px;line-height:1}
 #retryPlayer{padding:0 10px;font-size:12px;line-height:18px}
@@ -706,28 +692,14 @@ button.state-switch{height:var(--control-compact);min-height:var(--control-compa
 .source-delete{color:#ac2b3e}
 @media(max-width:720px){.page-heading .actions button{padding-inline:10px;font-size:12px}.source-editor-footer{gap:var(--control-gap)}.source-editor-footer button{padding-inline:10px;font-size:12px}}
 
-.route-controls>[data-test],.policies>[data-test]{color:var(--accent);border-color:var(--button-edge);background:var(--surface)}
 #clearLogs,button[data-stop-all]{color:#a52d3b}
 #clearLogs:enabled:hover,.source-editor-footer .source-delete:enabled:hover,button[data-stop-all]:enabled:hover{color:#a52d3b;border-color:#e6b8c0;background:#fff2f3}
-
-/* Keep the primary route switch centred even when hover actions wrap. */
-.control-cell .policies{position:relative;display:flex;align-items:center;align-content:center;flex-wrap:wrap;min-height:var(--control-compact);padding-inline-start:92px;gap:4px 2px;margin-top:0}
-.control-cell .policies>.state-switch{position:absolute;left:0;top:50%;transform:translateY(-50%);width:88px;margin:0}
-.control-cell .policies>[data-test]{order:0;min-width:var(--control-compact);padding-inline:0}
-.control-cell .policies>.play-route{order:1;margin-inline-start:0}
-.control-cell .policies>.hide-item{order:2;min-width:var(--control-compact);padding-inline:0}
 
 #hiddenList .hidden-parent>.hidden-row>button{display:inline-flex;align-items:center;justify-content:center;height:var(--control-compact);min-height:var(--control-compact);padding:0 10px;font-size:12px;line-height:18px;border-radius:var(--control-radius)}
 
 @media(max-width:460px){.page-heading:has(>.actions){flex-wrap:wrap;gap:12px}.page-heading>.actions{max-width:none;width:100%;flex-wrap:nowrap;justify-content:flex-start}.page-heading>.actions>button{flex:0 0 auto}}
 
 body[data-logo-beauty="transparent"] .station-mark{width:60px;height:36px;border-radius:7px}body[data-logo-beauty="transparent"] .logo-frame{width:44px;height:27px;border-radius:5px}body[data-logo-beauty="transparent"] .station-mark img{padding:0}body[data-logo-beauty="transparent"] :is(.station-mark,.station-mark img,.logo-frame){background:transparent;border-color:transparent}
-
-.route>.route-controls>.hide-item{width:32px;flex:0 0 32px;padding:0;display:inline-flex;align-items:center;justify-content:center}.route>.route-controls>.hide-item svg{width:16px;height:16px}
-@media(max-width:460px){.route>.route-controls{flex-wrap:nowrap;gap:4px}.route>.route-controls>.state-switch{width:80px;min-width:80px;gap:4px}.route>.route-controls>[data-test]{padding-inline:4px;font-size:11px}.route>.route-controls>.play-route{margin:0}}
-
-/* Reserve enough table width for one aligned action row. */
-.col-control{width:26%}.control-cell .policies{flex-wrap:nowrap;padding-inline-start:0;gap:2px}.control-cell .policies>.state-switch{position:static;transform:none;flex:0 0 88px}.control-cell .policies>.hide-item{flex:0 0 auto}
 
 /* Logo previews share one dialog across cards, tables and channel editors. */
 button.logo-preview-trigger{padding:0;cursor:zoom-in;flex:none;line-height:normal}
@@ -743,3 +715,9 @@ button.logo-preview-trigger{padding:0;cursor:zoom-in;flex:none;line-height:norma
 #logoPreviewImage[hidden],#logoPreviewStatus:empty{display:none}#logoPreviewStatus{font-size:13px;color:var(--muted);padding:24px 12px}
 
 #logoTaskProgress:not([hidden]){display:inline-block;margin-left:8px;padding-left:8px;border-left:1px solid var(--line);font-size:11px;color:var(--muted);max-width:100%;vertical-align:baseline}
+
+/* Pointer selection has no surrounding box; keyboard focus stays on the capsule. */
+.pref-switch:focus:not(:focus-visible){outline:none;box-shadow:none}
+button.state-switch,.pref-switch{touch-action:pan-y}
+
+button.state-switch[aria-checked=true]:enabled:hover{color:#14643b}

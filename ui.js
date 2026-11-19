@@ -131,7 +131,7 @@ $('accessForm').onsubmit=safely(async e=>{
    if(password)location.reload();
  }finally{renderAccess(state.password_mode);}
 });
-function directoryGroups(){return [...new Set(state.channels.map(c=>c.group))];}
+function directoryGroups(){return displayOrder([...new Set(state.channels.map(c=>c.group))],'groups',g=>g);}
 function hideButton(kind,name,url='',compact=false){
  const label={channel:'隐藏频道',route:'隐藏线路',group:'隐藏分组'}[kind];
  const icon='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 3 18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M6.5 6.5C4.4 8 3 10 2 12c2.2 4.5 5.5 7 10 7 1.9 0 3.5-.4 5-1.2M10 5.2c.7-.1 1.3-.2 2-.2 4.5 0 7.8 2.5 10 7a16 16 0 0 1-3 4"/></svg>';
@@ -215,7 +215,7 @@ function renderHidden(){
  if($('hiddenList').contains(popupAnchor))closePopup();
  const picked=new Set([...$('hiddenList').querySelectorAll('[data-hidden-pick]:checked')].map(el=>el.dataset.hiddenPick));
  const expanded=new Set([...$('hiddenList').querySelectorAll('details[open]')].map(el=>el.dataset.owner));
- const items=state.hidden||[];
+ const items=displayOrder(state.hidden||[],'hidden',x=>JSON.stringify([x.kind,x.name,x.url]));
  const toolbar='<div class="hidden-selection"><label><input type="checkbox" data-hidden-all> 全选</label><output></output><button type="button" data-hidden-clear>清空选择</button><button type="button" class="primary" title="恢复本列表中勾选的线路，沿用原有启停和检测规则。" data-hidden-submit>恢复所选线路</button></div>';
  const standalone=items.filter(item=>item.kind==='route');
  const individual=standalone.length?`<section class="hidden-parent standalone-routes" data-restore-scope data-owner='["route"]'>
@@ -225,7 +225,7 @@ function renderHidden(){
    const restore=[kind,name,url];
    const group=kind==='group',label=group?'分组':'频道';
    const inventory=(group?state.hidden_groups:state.hidden_channels)||{};
-   const routes=Object.hasOwn(inventory,name)?inventory[name]:[];
+   const routes=displayOrder(Object.hasOwn(inventory,name)?inventory[name]:[],'hidden:'+kind+':'+name,x=>JSON.stringify([x.name,x.url]));
    const owner=JSON.stringify([kind,name]);
    return `<section class="hidden-parent"><div class="hidden-row"><div class="hidden-name"><span class="tag">${label}</span><b>${esc(name)}</b></div>
      <button type="button" title="解除整个${label}的隐藏，单独隐藏的线路仍可在隐藏管理中恢复。" data-restore="${esc(JSON.stringify(restore))}">恢复整个${label}</button></div>
@@ -242,16 +242,28 @@ let healthFilter=null;
 let picked=selections.channels;
 let bulkSelectStep=0;
 let bulkSelectGroup='';
+// Display order is a view snapshot; playback/export keep canonical state order.
+const displayOrders=new Map();
+function displayOrder(items,scope,key){
+ let order=displayOrders.get(scope);
+ if(!order){order=new Map();displayOrders.set(scope,order);}
+ for(const item of items){const id=key(item);if(!order.has(id))order.set(id,order.size);}
+ return [...items].sort((a,b)=>order.get(key(a))-order.get(key(b)));
+}
+function displayRoutes(channel,scope='routes'){
+ return displayOrder(channel.lines.map((r,i)=>({r,i})),scope+':'+channel.name,x=>x.r.url);
+}
+function resetDisplayOrder(){displayOrders.clear();}
 function filtered(){
  const q=$('query').value.trim().toUpperCase(),g=$('group').value;
- return state.channels.filter(c=>(!drill||c.name===drill)&&(!g||c.group===g)&&(!healthFilter||c.group===healthFilter.group)&&(!q||[c.label,c.name,...c.lines.flatMap(r=>[r.url,r.platform])].join(' ').toUpperCase().includes(q)));
+ return displayOrder(state.channels,'channels',c=>c.name).filter(c=>(!drill||c.name===drill)&&(!g||c.group===g)&&(!healthFilter||c.group===healthFilter.group)&&(!q||[c.label,c.name,...c.lines.flatMap(r=>[r.url,r.platform])].join(' ').toUpperCase().includes(q)));
 }
 
 function routeKey(name,url){return JSON.stringify([name,url]);}
 function lineView(){return view==='lines';}
 function routeRows(list){
  const q=$('query').value.trim().toUpperCase();
- return list.flatMap(c=>c.lines.map((r,i)=>({c,r,i})).filter(({r})=>!q||[c.label,c.name,r.url,r.platform].join(' ').toUpperCase().includes(q)));
+ return list.flatMap(c=>displayRoutes(c).map(({r,i})=>({c,r,i})).filter(({r})=>!q||[c.label,c.name,r.url,r.platform].join(' ').toUpperCase().includes(q)));
 }
 const healthNames={pass:'可用',fail:'不可用',unmeasured:'未测',uncertain:'待确认'};
 function healthOf(r){return r.assessment==='保留'?'pass':r.assessment==='未测'?'unmeasured':['待复测','未能验证','暂时失败'].includes(r.assessment)?'uncertain':'fail';}
@@ -351,7 +363,7 @@ function routeControl(r){
  const action=r.enabled?'off':'on',label=toggleText(action==='on');
  const source=r.mode==='auto'?'检测自动控制':'手动选择；开启自动启停时，下次首测明确结果可替代此选择';
  const publication=r.publication_reason==='channel_disabled'?'频道已关闭发布，此线路未加入订阅。':r.publication_reason==='not_selected'?'仅发布最优线路，此线路作为备用。':'';
- return {action,label,title:`线路当前已${toggleText(r.enabled)}，点击${label}此线路。${source}。${publication}`};
+ return {action,title:`线路当前已${toggleText(r.enabled)}，点击${label}此线路。${source}。${publication}`};
 }
 function routeToggle(c,r){
    const {action,title}=routeControl(r);
@@ -387,11 +399,12 @@ async function openPlayer(name,url,attempt=0){
  const version=playerVersion,c=state.channels.find(c=>c.name===name),r=c?.lines.find(r=>r.url===url);
  if(!r)return;
  playerRoute={name,url};
+ if(!$('playerDialog').open)displayOrders.delete('player:'+name);
  closePopup();
  $('playerTitle').textContent=c.label;
  $('playerSource').textContent='线路'+(c.lines.indexOf(r)+1)+' · '+(r.platform||'来源未识别')+' · '+sourceNames(r)+(r.enabled?'':' · 已停用，仅试播');
  $('playerTitle').title=c.label+' · '+$('playerSource').textContent;
- $('playerLine').innerHTML=c.lines.map((line,i)=>`<option value="${esc(line.url)}">线路${i+1} · ${esc(line.platform||'来源未识别')} · ${line.enabled?'已启用':'已停用'} · ${esc(line.speed_display||'未测')}</option>`).join('');
+ $('playerLine').innerHTML=displayRoutes(c,'player').map(({r:line,i})=>`<option value="${esc(line.url)}">线路${i+1} · ${esc(line.platform||'来源未识别')} · ${line.enabled?'已启用':'已停用'} · ${esc(line.speed_display||'未测')}</option>`).join('');
  $('playerLine').value=r.url;
  $('playerLineControl').hidden=c.lines.length<2;
  $('playerStatus').textContent=attempt?'正在重新连接原始入口（'+attempt+'/2）…':'正在连接此线路…';$('retryPlayer').hidden=true;
@@ -530,7 +543,7 @@ function actionKeys(){
 }
 function syncRouteToggle(box,r){
  const button=box.querySelector('[data-policy]');
- const {action,label,title}=routeControl(r);
+ const {action,title}=routeControl(r);
  button.dataset.policy=action;
  setSwitch(button,r.enabled);
  button.title=title;
@@ -618,7 +631,7 @@ function channelCard(c){
  return `<article data-card-name="${esc(c.name)}" data-selection-key="${esc(c.name)}" data-publication="${published?'published':'unpublished'}" aria-label="${esc(c.label)}" aria-description="${esc(publicationHint)}" title="${esc(publicationHint)}" class="channel-card ${picked.has(c.name)?'marked':''}">
  <div class="card-name">
  ${logo?`<button type="button" class="station-mark logo-preview-trigger" data-logo-preview data-logo-owner="${esc(c.name)}" aria-label="预览 ${esc(c.label)}台标" title="点击预览台标"><img data-channel-logo="${esc(c.name)}" src="${esc(logo)}" loading="lazy" referrerpolicy="no-referrer" alt="${esc(c.label)}台标"></button>`:`<span class="station-mark" aria-hidden="true">${initials}</span>`}
- <div class="card-identity"><button type="button" data-channel="${esc(c.name)}" title="点击查看详情：【${esc(c.label)}】">${esc(c.label)}</button><div class="card-caption" aria-label="线路启停状态">${c.lines.map((r,i)=>{const label='线路'+(i+1)+' · '+(r.platform||'来源未识别')+' · '+(r.enabled?'已启用':'已停用');return `<span class="route-state-dot" data-enabled="${Boolean(r.enabled)}" role="img" aria-label="${esc(label)}" title="${esc(label)}"></span>`;}).join('')}</div></div>
+ <div class="card-identity"><button type="button" data-channel="${esc(c.name)}" title="点击查看详情：【${esc(c.label)}】">${esc(c.label)}</button><div class="card-caption" aria-label="线路启停状态">${displayRoutes(c).map(({r,i})=>{const label='线路'+(i+1)+' · '+(r.platform||'来源未识别')+' · '+(r.enabled?'已启用':'已停用');return `<span class="route-state-dot" data-enabled="${Boolean(r.enabled)}" role="img" aria-label="${esc(label)}" title="${esc(label)}"></span>`;}).join('')}</div></div>
  ${hideButton('channel',c.name,'',true)}
  </div><div class="card-data"><div class="card-quality">${cardDetection(c)}</div>${c.lines.length?playButton(c,preferred):''}</div></article>`;
 }
@@ -846,7 +859,7 @@ function sourceToggle(s){
  return button.outerHTML;
 }
 function renderFeeds(){
- const sources=state.sources;
+ const sources=displayOrder(state.sources,'sources',s=>s.id);
  $('sourceSummary').innerHTML=`<span><b>${sources.length}</b> 个订阅</span><span><i class="source-dot"></i>${sources.filter(s=>s.enabled).length} 个已启用</span><span>${sources.filter(s=>s.kind==='playlist').length} 个直播源 · ${sources.filter(s=>s.kind==='epg').length} 个节目单 · ${sources.filter(s=>s.kind==='logo').length} 个台标订阅</span>`;
  $('feeds').innerHTML=sources.map(s=>`<article class="feed">
    <div class="feed-top">${sourceIcon(s.kind)}<div class="feed-title"><span class="feed-kind">${s.kind==='epg'?'节目单 · XMLTV':s.kind==='logo'?'台标 · JSON':'直播源 · M3U / TXT'}</span><h2>${esc(s.name)}</h2></div>${sourceToggle(s)}</div>
@@ -939,7 +952,8 @@ function editOptions(pairs,selected,defaultLabel){
 }
 function editChannel(key){
  const c=state.channels.find(x=>x.name===key), r=state.rules[key]||{};
- const routes=c.lines.map((line,i)=>`<div class="route"><div class="route-heading"><b>线路${i+1} · ${esc(line.from.join(' / '))}</b><span data-result-badge>${testBadge(c.name,line)}</span></div><p class="url">${addressLink(c,line,i)}<small class="source-name">${esc(detailSource(line))}</small></p><small data-probe-cell="${esc(line.url)}"><span class="last-probe">${detailMetrics(line)}</span><span class="live-probe metric-result"></span></small><div class="route-controls">${routeToggle(c,line)}<button type="button" data-test="${esc(line.url)}" ${busy?'disabled':''}>检测此线路</button>${hideButton('route',key,line.url,true)}${playButton(c,line)}</div></div>`).join('');
+ displayOrders.delete('detail:'+key);
+ const routes=displayRoutes(c,'detail').map(({r:line,i})=>`<div class="route"><div class="route-heading"><b>线路${i+1} · ${esc(line.from.join(' / '))}</b><span data-result-badge>${testBadge(c.name,line)}</span></div><p class="url">${addressLink(c,line,i)}<small class="source-name">${esc(detailSource(line))}</small></p><small data-probe-cell="${esc(line.url)}"><span class="last-probe">${detailMetrics(line)}</span><span class="live-probe metric-result"></span></small><div class="route-controls">${routeToggle(c,line)}<button type="button" data-test="${esc(line.url)}" ${busy?'disabled':''}>检测此线路</button>${hideButton('route',key,line.url)}${playButton(c,line)}</div></div>`).join('');
  const groups=[...new Set([...directoryGroups(),...Object.keys(state.hidden_groups||{})])].map(g=>[g,g]);
  const members=c.members.filter(m=>m!==key);
  const targets=state.channels.filter(ch=>ch.name!==key).map(ch=>[ch.name,ch.label===ch.name?ch.label:`${ch.label}（${ch.name}）`]);
@@ -1045,7 +1059,7 @@ function refreshDetailResults(){
 
  list.querySelector('h3 small').textContent=c.lines.length+' 条';
  let previous=list.querySelector('h3');
- for(const [index,r] of c.lines.entries()){
+ for(const {r,i:index} of displayRoutes(c,'detail')){
    const box=boxes.get(r.url);
    if(!box)continue;
    if(previous.nextElementSibling!==box)previous.after(box);
@@ -1181,6 +1195,53 @@ async function status(){
  revision=job.revision;wasRunning=job.running;paintProgress();
 }
 async function launch(action,url,urls){await api('job',{action,url,urls});wasRunning=true;await status();}
+// Switch gestures are limited to the capsule; adjacent status text is inert.
+function capsuleHit(control,x,y){
+ const r=control.getBoundingClientRect(),native=control.matches('input');
+ const left=native?r.left:r.left+4,width=native?r.width:32,height=native?r.height:20;
+ const top=native?r.top:r.top+(r.height-height)/2;
+ return x>=left&&x<=left+width&&y>=top&&y<=top+height;
+}
+let capsuleGesture=null;
+const capsuleClicks=new WeakSet();
+const capsuleTarget=e=>e.target.closest('.state-switch,.pref-switch');
+function capsuleHelp(control,x,y){
+ const text=control.getAttribute('title');
+ if(text)control.dataset.capsuleHelp=text;
+ if(capsuleHit(control,x,y)&&control.dataset.capsuleHelp)control.setAttribute('title',control.dataset.capsuleHelp);
+ else control.removeAttribute('title');
+}
+for(const kind of ['pointerover','pointermove'])document.addEventListener(kind,e=>{
+ const control=capsuleTarget(e);
+ if(control)capsuleHelp(control,e.clientX,e.clientY);
+},true);
+document.addEventListener('pointerout',e=>{
+ const control=capsuleTarget(e);
+ if(control){const text=control.getAttribute('title');if(text)control.dataset.capsuleHelp=text;control.removeAttribute('title');}
+},true);
+document.addEventListener('pointerdown',e=>{
+ const control=capsuleTarget(e);
+ capsuleGesture=control&&!control.disabled&&capsuleHit(control,e.clientX,e.clientY)?{control,id:e.pointerId,x:e.clientX,y:e.clientY}:null;
+},true);
+document.addEventListener('pointercancel',()=>{capsuleGesture=null;},true);
+document.addEventListener('pointerup',e=>{
+ const g=capsuleGesture;capsuleGesture=null;
+ if(!g||g.id!==e.pointerId||g.control.disabled)return;
+ const dx=e.clientX-g.x,dy=e.clientY-g.y;
+ if(Math.abs(dx)<10||Math.abs(dx)<=Math.abs(dy))return;
+ const on=g.control.matches('input')?g.control.checked:g.control.getAttribute('aria-checked')==='true';
+ if(on!==(dx>0))g.control.click();
+ capsuleClicks.add(g.control);
+ setTimeout(()=>capsuleClicks.delete(g.control),500);
+ e.preventDefault();
+},true);
+document.addEventListener('click',e=>{
+ const control=capsuleTarget(e);
+ if(!control||e.detail===0)return; // Keyboard and explicit gesture activation.
+ if(capsuleClicks.has(control)||!capsuleHit(control,e.clientX,e.clientY)){
+  capsuleClicks.delete(control);e.preventDefault();e.stopImmediatePropagation();
+ }
+},true);
 document.addEventListener('click',safely(async e=>{
  const logoTrigger=e.target.closest('[data-logo-preview]');
  if(logoTrigger){e.preventDefault();openLogoPreview(logoTrigger);return;}
@@ -1218,6 +1279,8 @@ document.addEventListener('click',safely(async e=>{
  if(e.target.id==='resetSearch'){$('query').value='';$('group').value='';drill='';setHealth(null);return;}
  const tab=e.target.closest('button[data-tab]');
  if(tab){
+   const entering=$(tab.dataset.tab).hidden;
+   if(entering)resetDisplayOrder();
    closePopup();captureDirectoryScroll();
    for(const b of document.querySelectorAll('button[data-tab]')){
      const current=b===tab;
@@ -1225,6 +1288,7 @@ document.addEventListener('click',safely(async e=>{
      if(current)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');
    }
    $('pageLabel').textContent=tab.textContent.trim();
+   if(entering){render();renderFeeds();}
    if(tab.dataset.tab==='channels'){
      directorySwitching=true;
      try{compactCatalogTools();restoreDirectoryScroll();}finally{directorySwitching=false;}
@@ -1315,7 +1379,7 @@ $('bulkMode').onclick=toggleBulkMode;
 $('bulkDone').onclick=()=>{toggleBulkMode();$('bulkMode').focus({preventScroll:true});};
 function switchDirectoryView(next){
  if(next===view)return;
- displayMode(next);bulkSelectStep=0;
+ resetDisplayOrder();displayMode(next);bulkSelectStep=0;
 }
 $('viewLines').onclick=()=>switchDirectoryView('lines');$('viewCards').onclick=()=>switchDirectoryView('channels');
 applyHelp();
@@ -1374,7 +1438,7 @@ $('hiddenDialog').addEventListener('close',()=>{
  if($('hiddenDialog').contains($('infoPopup'))){closePopup();document.body.append($('infoPopup'));}
  $('hiddenList').replaceChildren();$('hiddenFeedback').textContent='';
 });
-$('hiddenManager').onclick=()=>{renderHidden();$('hiddenDialog').showModal();};
+$('hiddenManager').onclick=()=>{for(const key of displayOrders.keys())if(key==='hidden'||key.startsWith('hidden:'))displayOrders.delete(key);renderHidden();$('hiddenDialog').showModal();};
 $('closeHidden').onclick=()=>$('hiddenDialog').close();
 $('newSource').onclick=()=>editSource();$('close').onclick=()=>$('dialog').close();
 $('editor').onsubmit=safely(async e=>{e.preventDefault();
