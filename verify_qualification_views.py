@@ -6,7 +6,7 @@ from http.server import ThreadingHTTPServer
 from unittest.mock import patch
 import service
 from app import Handler
-from catalog import assess,policy_changed
+from catalog import assess,policy_changed,route_enabled,selected
 from verify_dual_schedule import GOOD
 
 def record(speed=150,threshold=100,assessment='保留'):
@@ -14,6 +14,16 @@ def record(speed=150,threshold=100,assessment='保留'):
   'evidence':{**copy.deepcopy(GOOD['evidence']),'qualification':dict(state='passed' if assessment=='保留' else 'failed',assessment=assessment,criteria='both',min_speed=threshold,min_height=720)}}
 
 def main():
+ # Automatic activation requires a pass; unresolved results are not dead sources.
+ for assessment in ('保留','未测','待复测','未能验证','暂时失败','速率未达标','分辨率未达标','分辨率未知','历史结论未知'):
+  route=dict(mode='auto',assessment=assessment)
+  assert route_enabled(route,{})==(assessment=='保留'),assessment
+  assert bool(list(selected([dict(lines=[route])],{})))==(assessment=='保留')
+  assert route_enabled({**route,'mode':'on'}, {})
+  assert not route_enabled({**route,'mode':'off'}, {})
+ # A same-job retry preserves the first verdict, rather than changing activation.
+ assert not route_enabled(dict(mode='auto',assessment='保留',activation_assessment='待复测'),{})
+ assert route_enabled(dict(mode='auto',assessment='未能验证',activation_assessment='保留'),{})
  with tempfile.TemporaryDirectory() as folder,patch.object(service,'DATA',Path(folder)):
   service.init()
   labels=['auto','on','off','oldfailed','legacy','coarse','grace']
@@ -60,6 +70,7 @@ def main():
     assert rows[urls['legacy']]['detection']['assessment']=='历史结论未知'
     assert rows[urls['coarse']]['current_qualification']['state']!='passed'
     assert rows[urls['grace']]['assessment']=='待复测'
+    assert not rows[urls['grace']]['enabled'] and not rows[urls['grace']]['published']
     with service.db() as c:
      for (url,raw),(old_url,old_raw) in zip(c.execute('select * from tests order by url'),original):
       assert url==old_url

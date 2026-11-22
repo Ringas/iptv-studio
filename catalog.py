@@ -370,7 +370,7 @@ def build(sources, tests, overrides, route_modes=None, settings=None, profiles=N
     return result
 
 def route_enabled(route, settings):
-    return route['mode']=='on' or (route['mode']=='auto' and (not settings.get('strict',True) or route.get('activation_assessment',route['assessment']) in ('保留','待复测')))
+    return route['mode']=='on' or (route['mode']=='auto' and (not settings.get('strict',True) or route.get('activation_assessment',route['assessment'])=='保留'))
 
 def selected(channels, settings):
     for channel in channels:
