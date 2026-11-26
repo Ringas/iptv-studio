@@ -1180,7 +1180,7 @@ async function status(){
  const {job,logs,log_id,logo_beauty,logo_optimization,logo_cache_revision}=await api('status?compact=1');liveJob=job;liveLogoJob=logo_optimization||null;
  legacyLogs=log_id===undefined?(logs||[]):null;
  $('logKind').disabled=Boolean(legacyLogs);
- if(legacyLogs)$('logKind').value='history';
+ if(legacyLogs)$('logKind').value='refresh';
  latestLogVersion=JSON.stringify([log_id,job.log_epoch]);
  if($('logDialog').open&&logVersion!==latestLogVersion)await loadLogs(latestLogVersion);
  busy=job.running;$('sync').disabled=busy;updateProbeAction();
@@ -1407,7 +1407,8 @@ async function loadLogs(version){
  $('logs').innerHTML=rows.map(row=>{
    const time=esc(formatTime(row.ts));
    const failed=['失败','部分失败','未通过','暂时失败','未能验证','待复测'].includes(row.result);
-   const reason=failed?`<details data-id="${row.id}" ${open.has(String(row.id))?'open':''}><summary>查看失败原因</summary><p>${esc(diagnosticText(row.reason||row.message))}</p></details>`:'';
+   const logoPartial=kind==='logo'&&row.result==='部分完成'&&row.reason;
+   const reason=(failed||logoPartial)?`<details data-id="${row.id}" ${open.has(String(row.id))?'open':''}><summary>${logoPartial?'查看未能处理原因':'查看失败原因'}</summary><p>${esc(diagnosticText(row.reason||row.message))}</p></details>`:'';
    return `<article class="log-entry"><header><b>${esc(row.source||'历史任务')}${row.channel?' · '+esc(row.channel):''}</b><time>${time}</time></header>
     <div>${speedTones.has(row.result)?metricText(row.result,speedTones.get(row.result)):`<strong class="${failed?'bad':['已跳过','已终止'].includes(row.result)?'':'good'}">${esc(diagnosticText(row.result))}</strong>`} ${esc(diagnosticText(row.message))}</div>
     ${row.url?`<small class="url">${esc(row.url)}</small>`:''}${reason}</article>`;

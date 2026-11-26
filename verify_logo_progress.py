@@ -16,7 +16,7 @@ with tempfile.TemporaryDirectory() as d,patch.object(service,'DATA',Path(d)):
   items=[dict(name='fixture'+str(i),url=f'https://fixture.invalid/{i}',attrs={'tvg-logo':f'https://fixture.invalid/logo{j}.png'} if j is not None else {},options=[]) for i,j in enumerate([0,1,1,None])]
   c.execute("insert into sources(name,kind,enabled,priority,items) values('fixture','playlist',1,1,?)",(service.encode(items),))
   cfg=service.config(c);cfg.update(minutes=0,logo_beauty='light');service.save_config(c,cfg)
-  before=c.execute('select count(*) from logs').fetchone()[0]
+  before=c.execute("select count(*) from logs where kind in ('refresh','probe')").fetchone()[0]
  def image(candidates,*_,**__):
   calls.append(candidates)
   if 'logo1.png' in candidates[0]:raise ValueError('fixture unavailable')
@@ -42,9 +42,23 @@ with tempfile.TemporaryDirectory() as d,patch.object(service,'DATA',Path(d)):
    assert service.job==probe and len(calls)==2
    assert any(a[0]=='logo.waiting' for a,k in events) and any(a[0]=='logo.resumed' for a,k in events)
    assert any(a[0]=='logo.finished' and '未能处理 1' in a[1] for a,k in events)
-   with service.db() as c:assert c.execute('select count(*) from logs').fetchone()[0]==before,'frontend task logs changed'
+   with service.db() as c:
+    records=[{**dict(row),'details':service.json.loads(row['details'])} for row in c.execute("select message,details from logs where kind='logo' order by id")]
+    assert c.execute("select count(*) from logs where kind in ('refresh','probe')").fetchone()[0]==before
+   assert any('开始优化' in row['message'] for row in records)
+   assert any('暂时等待' in row['message'] for row in records)
+   assert any('继续优化台标' in row['message'] for row in records)
+   assert any('优化完成' in row['message'] and '未能处理 1' in row['message'] for row in records)
+   assert any('台标文件不符合处理要求' in row['details'].get('reason','') for row in records)
+   # A periodic check remains quiet on success, but records actionable failures.
+   with patch.object(service,'cached_image',side_effect=ValueError('fixture unavailable')):
+    service.request_logo_warm(quiet=True)
+    until(lambda:service.logo_status()['phase']=='complete')
+   with service.db() as c:
+    latest=service.json.loads(c.execute("select details from logs where kind='logo' order by id desc limit 1").fetchone()[0])
+   assert latest['result']=='部分完成' and '台标文件不符合处理要求' in latest['reason']
  finally:
   service.job.clear();service.job.update(original);service._logo_warm_changed.set()
   worker=service._logo_warm_thread
   if worker:worker.join(3)
-print('通过：检测期间等待、检测结束恢复、关闭取消、图片去重、无图跳过、成功/失败进度、后台日志与前台记录隔离。')
+print('通过：检测期间等待、检测结束恢复、关闭取消、图片去重、无图跳过、成功/失败进度，以及独立的可读台标优化记录。')

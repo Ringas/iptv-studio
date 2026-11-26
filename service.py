@@ -977,6 +977,42 @@ def cleanup_logo_cache():
     if removed:event('logo.cache_cleaned',f'已清理 {removed} 个未使用的台标缓存文件',log_type='policy')
 
 
+def _logo_log(root, message, **fields):
+    """Write concise, user-readable logo activity without affecting other task logs."""
+    try:
+        with sqlite3.connect(root/'hub.sqlite', timeout=2) as c:
+            log(c, message, 'logo', source='台标优化', **fields)
+    except sqlite3.Error as exc:
+        event('logo.log_failed', '台标优化记录暂时无法写入', 'DEBUG', error_type=type(exc).__name__)
+
+
+def _logo_error_reason(error):
+    """Keep frontend failure reasons useful without exposing logo URLs or raw internals."""
+    if isinstance(error,HTTPError):
+        if error.code==404:return '台标地址不存在（HTTP 404）'
+        if error.code==429:return '台标服务器暂时限流（HTTP 429）'
+        if 500<=error.code<600:return f'台标服务器暂时不可用（HTTP {error.code}）'
+        return f'台标地址无法访问（HTTP {error.code}）'
+    if isinstance(error,TimeoutError):return '下载台标超时'
+    if isinstance(error,subprocess.SubprocessError):return '台标图片处理失败'
+    if isinstance(error,KeyError):return '本地上传台标已不存在'
+    if isinstance(error,OSError):return '连接台标服务器失败'
+    text=str(error)
+    if '无法解码' in text or '像素数据' in text:return '台标图片无法解码'
+    if '空白图片' in text:return '台标图片为空白'
+    if '没有可加载的台标' in text:return '没有可用的台标地址'
+    return '台标文件不符合处理要求'
+
+
+def _logo_failure_summary(channel, attempts, fallback):
+    reasons=[]
+    for _,error in attempts:
+        reason=_logo_error_reason(error)
+        if reason not in reasons:reasons.append(reason)
+    if not reasons:reasons=[_logo_error_reason(fallback)]
+    return f"{channel['label']}：{'；'.join(reasons)}"
+
+
 def request_logo_warm(only_missing=False,quiet=False):
     global _logo_warm_thread,_logo_warm_pending,_logo_warm_version
     with db() as c:
@@ -994,11 +1030,13 @@ def request_logo_warm(only_missing=False,quiet=False):
         reused=all_count-len(unique)
         if reused and (not quiet or unique):event('logo.cache_reused',f'台标缓存有效 · 复用 {reused} 张 · 待处理 {len(unique)} 张',log_type='policy')
         if not unique:
+            if not quiet:
+                _logo_log(DATA, '没有需要处理的台标，继续使用现有缓存', result='完成', total=0, ready=reused, skipped=skipped)
             cleanup_logo_cache();return
     if mode=='off':unique={}
     with _logo_warm_lock:
         _logo_warm_version+=1
-        _logo_warm_pending=(_logo_warm_version,DATA,mode,list(unique.values()))
+        _logo_warm_pending=(_logo_warm_version,DATA,mode,list(unique.values()),skipped,quiet)
         _logo_progress.update(running=mode!='off',phase='queued' if mode!='off' else 'off',mode=mode,
                               done=0,total=len(unique),ready=0,failed=0,skipped=skipped,finished_at=0)
         _logo_warm_changed.set()
@@ -1015,13 +1053,15 @@ def _prepare_logos():
             if task is None:
                 _logo_warm_thread=None
                 return
-        version,root,mode,channels=task
-        started=time.monotonic();done=ready=failed=0;waiting=False;failures=[]
+        version,root,mode,channels,skipped,quiet=task
+        started=time.monotonic();done=ready=failed=0;waiting=False;failures=[];failure_reasons=[]
         label={'off':'关闭','light':'浅色','dark':'深色','transparent':'透明'}[mode]
         if mode=='off':
             event('logo.disabled','台标优化已关闭，保留原图样式',log_type='policy')
+            if not quiet:_logo_log(root, '已关闭台标优化，恢复使用原图', result='已关闭', total=0, skipped=skipped)
             continue
         event('logo.started',f'开始台标检查与优化 · {label} · 共 {len(channels)} 项')
+        if not quiet:_logo_log(root, f'开始优化 · {label}模式 · 待处理 {len(channels)} 个台标', result='开始', mode=label, total=len(channels), skipped=skipped)
         def local(address):
             with sqlite3.connect(root/'hub.sqlite') as connection:
                 row=connection.execute('select png from channel_logos where digest=? limit 1',(address[7:-4],)).fetchone()
@@ -1037,17 +1077,20 @@ def _prepare_logos():
                 if paused!=waiting:
                     event('logo.waiting' if paused else 'logo.resumed',
                           '线路检测优先，台标优化等待检测结束' if paused else '线路检测已结束，继续台标优化',log_type='policy')
+                    if not quiet:_logo_log(root, '线路检测进行中，台标优化暂时等待' if paused else '线路检测已结束，继续优化台标', result='等待检测' if paused else '继续处理', mode=label, done=done, total=len(channels), ready=ready, failed=failed)
                     waiting=paused
                 if not paused:break
                 _logo_warm_changed.wait(.25)
             with _logo_warm_lock:
                 if version!=_logo_warm_version:break
             try:
-                cached_image(channel['original_logo_candidates'],mode,root/'logo-cache',lambda address,limit:fetch(address,limit,timeout=8),local,migrate=True)
+                attempts=[]
+                cached_image(channel['original_logo_candidates'],mode,root/'logo-cache',lambda address,limit:fetch(address,limit,timeout=8),local,migrate=True,failures=attempts)
                 ready+=1
             except Exception as exc:
                 failed+=1
                 if len(failures)<3:failures.append(channel['name'])
+                if len(failure_reasons)<20:failure_reasons.append(_logo_failure_summary(channel,attempts,exc))
                 event('logo.preparation_failed','台标暂未准备好','DEBUG',channel=channel['name'],error_type=type(exc).__name__)
             done+=1
             with _logo_warm_lock:
@@ -1055,16 +1098,25 @@ def _prepare_logos():
                 _logo_progress.update(done=done,ready=ready,failed=failed)
             if done<len(channels) and done%max(10,(len(channels)+3)//4)==0:
                 event('logo.progress',f'台标优化 · 已处理 {done}/{len(channels)} 项 · 已就绪 {ready} · 未能处理 {failed}')
+                if not quiet:_logo_log(root, f'处理中 · 已处理 {done}/{len(channels)} 个台标 · 已就绪 {ready} · 未能处理 {failed}', result='处理中', mode=label, done=done, total=len(channels), ready=ready, failed=failed)
         with _logo_warm_lock:
             current=version==_logo_warm_version
             if current:_logo_progress.update(running=False,phase='complete',done=done,ready=ready,failed=failed,finished_at=time.time())
         if not current:
             event('logo.cancelled','设置已变更，停止旧台标队列并切换到最新模式',log_type='policy')
+            if not quiet:_logo_log(root, '设置已变更，已停止上一轮台标优化', result='已取消', mode=label, done=done, total=len(channels), ready=ready, failed=failed)
         else:
             if root==DATA:cleanup_logo_cache()
             event('logo.finished',f'台标优化完成 · {label} · 已就绪 {ready}/{len(channels)} 项 · 未能处理 {failed}',
                   elapsed_ms=round((time.monotonic()-started)*1000),log_type='summary',
                   tip=('未能处理：'+'、'.join(failures)+'；保留兜底台标，可稍后重试') if failed else None)
+            result='完成' if not failed else '部分完成'
+            summary=f'优化完成 · {label}模式 · 已就绪 {ready}/{len(channels)} 个台标'
+            if failed:summary+=f' · 未能处理 {failed} 个（保留原台标）'
+            reason='；'.join(failure_reasons)
+            if failed>len(failure_reasons):reason+=f'；其余 {failed-len(failure_reasons)} 个台标未能处理'
+            # Periodic cache checks stay quiet when all is well, but never hide a failed logo.
+            if not quiet or failed:_logo_log(root, summary, result=result, mode=label, done=done, total=len(channels), ready=ready, failed=failed, reason=reason, elapsed_ms=round((time.monotonic()-started)*1000))
 
 
 def prepare_logo(encoded):
@@ -1092,7 +1144,7 @@ def edit(kind,p,queue_refresh=False):
     with LOCK,db() as c:
         if kind=='clear-logs':
             category=p.get('kind')
-            if category not in ('refresh','probe','history'):raise ValueError('请选择有效的记录类型')
+            if category not in ('refresh','probe','logo'):raise ValueError('请选择有效的记录类型')
             if c.execute('delete from logs where kind=?',(category,)).rowcount:
                 # Deleting older entries can leave max(logs.id) unchanged.
                 job['log_epoch']=uuid.uuid4().hex

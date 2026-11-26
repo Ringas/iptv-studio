@@ -1,5 +1,10 @@
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
 const source=fs.readFileSync('ui.js','utf8');const code=source.slice(source.indexOf('function logoProgressText('),source.indexOf('function paintProgress('));
+const page=fs.readFileSync('index.html','utf8');
+assert.match(page,/<option value="logo">台标优化<\/option>/);
+assert.doesNotMatch(page,/历史记录/);
+assert.match(source,/if\(legacyLogs\)\$\('logKind'\)\.value='refresh'/);
+assert.match(source,/查看未能处理原因/);
 const elements={logoTaskProgress:{},taskMessage:{textContent:'正在检测 CCTV1'},taskProgress:{textContent:'检测进度 2/9'}};
 const ctx=vm.createContext({$:id=>elements[id],liveJob:{running:true},liveLogoJob:{running:true,phase:'waiting',mode:'light',done:2,total:8}});vm.runInContext(code,ctx);ctx.paintLogoProgress();
 assert.equal(elements.taskMessage.textContent,'正在检测 CCTV1');assert.equal(elements.taskProgress.textContent,'检测进度 2/9');assert.equal(elements.logoTaskProgress.hidden,false);assert.match(elements.logoTaskProgress.textContent,/等待检测完成.*2\/8/);

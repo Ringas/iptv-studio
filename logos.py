@@ -385,7 +385,7 @@ def _complete_render(folder,url,digest):
                     for path in Path(folder).glob('content-'+previous+'-*.png'):path.unlink(missing_ok=True)
 
 
-def cached_image(candidates,mode,folder,fetch,local,migrate=False):
+def cached_image(candidates,mode,folder,fetch,local,migrate=False,failures=None):
     folder=Path(folder);folder.mkdir(parents=True,exist_ok=True)
     legacy=_legacy_path(candidates,mode,folder)
     if not migrate and legacy.exists() and time.time()-legacy.stat().st_mtime<CHECK_INTERVAL:
@@ -413,7 +413,8 @@ def cached_image(candidates,mode,folder,fetch,local,migrate=False):
                         _atomic(path,result);index['generation']=index.get('generation',0)+1;_save_index(folder,index)
                     _complete_render(folder,url,digest)
                 return result
-        except (ValueError,OSError,KeyError,HTTPException,subprocess.SubprocessError):
+        except (ValueError,OSError,KeyError,HTTPException,subprocess.SubprocessError) as exc:
+            if failures is not None: failures.append((url,exc))
             with _index_lock:
                 record=_index(folder)['sources'].get(_url_key(url),{})
                 if record.get('previous'):
